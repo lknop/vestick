@@ -59,7 +59,7 @@ check_prereqs() {
     log "Checking prerequisites"
     [[ $EUID -eq 0 ]] || fail "Must run as root"
     [[ "$(uname -m)" == "x86_64" ]] || fail "Build host must be x86_64 (got $(uname -m))"
-    for cmd in debootstrap mksquashfs chroot rsync sgdisk grub-install mkfs.fat mkfs.ext4 losetup; do
+    for cmd in debootstrap mksquashfs chroot rsync sgdisk grub-install mkfs.fat mkfs.ext4 losetup wget; do
         command -v "$cmd" >/dev/null || fail "Missing command: $cmd"
     done
     case "$LOG_SHIPPER" in
@@ -87,9 +87,23 @@ deb $MIRROR $SUITE-updates main contrib non-free-firmware
 deb $SECURITY_MIRROR $SUITE-security main contrib non-free-firmware
 EOF
     if [[ $INCLUDE_PROXMOX -eq 1 ]]; then
-        # TODO: install Proxmox release signing key into $CHROOT/etc/apt/keyrings/
-        # TODO: write $CHROOT/etc/apt/sources.list.d/pve-no-subscription.sources
-        log "Proxmox repo configuration not yet implemented (Phase 2)"
+        # Fetch the Proxmox release key at build time — never bundled in this repo
+        # (we ship the recipe; user's build pulls Proxmox bits direct from upstream).
+        local pve_key_url="https://enterprise.proxmox.com/debian/proxmox-release-${PVE_SUITE}.gpg"
+        local pve_key_path="/etc/apt/keyrings/proxmox-release-${PVE_SUITE}.gpg"
+        log "Fetching Proxmox release key: $pve_key_url"
+        mkdir -p "$CHROOT/etc/apt/keyrings"
+        wget -qO "$CHROOT$pve_key_path" "$pve_key_url" \
+            || fail "Failed to fetch Proxmox release key from $pve_key_url"
+        [[ -s "$CHROOT$pve_key_path" ]] \
+            || fail "Proxmox release key is empty: $CHROOT$pve_key_path"
+        cat > "$CHROOT/etc/apt/sources.list.d/pve-no-subscription.sources" <<EOF
+Types: deb
+URIs: $PVE_MIRROR
+Suites: $PVE_SUITE
+Components: pve-no-subscription
+Signed-By: $pve_key_path
+EOF
     fi
     mount_chroot
     chroot_run apt-get update
