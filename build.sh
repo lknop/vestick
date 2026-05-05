@@ -7,7 +7,9 @@ set -euo pipefail
 ARCH="${ARCH:-amd64}"
 SUITE="${SUITE:-trixie}"
 LOG_SHIPPER="${LOG_SHIPPER:-rsyslog}"
+INCLUDE_PROXMOX="${INCLUDE_PROXMOX:-1}"
 MIRROR="${MIRROR:-http://deb.debian.org/debian}"
+SECURITY_MIRROR="${SECURITY_MIRROR:-http://security.debian.org/debian-security}"
 PVE_MIRROR="${PVE_MIRROR:-http://download.proxmox.com/debian/pve}"
 PVE_SUITE="${PVE_SUITE:-$SUITE}"
 WORK="${WORK:-$PWD/work}"
@@ -27,6 +29,29 @@ read_pkg_list() {
     grep -vE '^\s*(#|$)' "$f"
 }
 
+mount_chroot() {
+    mount -t proc proc "$CHROOT/proc"
+    mount -t sysfs sys "$CHROOT/sys"
+    # rbind so /dev/pts comes along — apt's maintainer scripts allocate ptys.
+    # make-rslave so umount inside the chroot doesn't propagate to the host.
+    mount --rbind /dev "$CHROOT/dev"
+    mount --make-rslave "$CHROOT/dev"
+}
+
+umount_chroot() {
+    # Best-effort; called from EXIT trap so don't fail the build.
+    umount -R "$CHROOT/dev" "$CHROOT/sys" "$CHROOT/proc" 2>/dev/null || true
+}
+
+chroot_run() {
+    chroot "$CHROOT" /usr/bin/env -i \
+        HOME=/root \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive \
+        LC_ALL=C \
+        "$@"
+}
+
 check_prereqs() {
     log "Checking prerequisites"
     [[ $EUID -eq 0 ]] || fail "Must run as root"
@@ -42,28 +67,45 @@ check_prereqs() {
 
 bootstrap_base() {
     log "debootstrap --variant=minbase $SUITE -> $CHROOT"
-    # TODO: debootstrap --variant=minbase --arch="$ARCH" "$SUITE" "$CHROOT" "$MIRROR"
+    if [[ -e "$CHROOT" ]]; then
+        log "Existing chroot at $CHROOT — removing before re-bootstrap"
+        umount_chroot
+        rm -rf "$CHROOT"
+    fi
+    mkdir -p "$CHROOT"
+    debootstrap --variant=minbase --arch="$ARCH" "$SUITE" "$CHROOT" "$MIRROR"
 }
 
 configure_apt() {
-    log "Configuring apt sources (Debian + non-free-firmware + Proxmox)"
-    # TODO: write $CHROOT/etc/apt/sources.list.d/debian.sources with main + non-free-firmware
-    # TODO: write $CHROOT/etc/apt/sources.list.d/pve-no-subscription.sources
-    # TODO: install Proxmox repo signing key into $CHROOT/etc/apt/keyrings/
-    # TODO: chroot apt-get update
+    log "Writing apt sources (Debian$( [[ $INCLUDE_PROXMOX -eq 1 ]] && echo ' + Proxmox' ))"
+    cat > "$CHROOT/etc/apt/sources.list" <<EOF
+deb $MIRROR $SUITE main contrib non-free-firmware
+deb $MIRROR $SUITE-updates main contrib non-free-firmware
+deb $SECURITY_MIRROR $SUITE-security main contrib non-free-firmware
+EOF
+    if [[ $INCLUDE_PROXMOX -eq 1 ]]; then
+        # TODO: install Proxmox release signing key into $CHROOT/etc/apt/keyrings/
+        # TODO: write $CHROOT/etc/apt/sources.list.d/pve-no-subscription.sources
+        log "Proxmox repo configuration not yet implemented (Phase 2)"
+    fi
+    mount_chroot
+    chroot_run apt-get update
 }
 
 install_packages() {
-    log "Installing packages (base + proxmox + logging:$LOG_SHIPPER)"
-    local lists=("$PKG_DIR/base.list" "$PKG_DIR/proxmox.list")
+    local lists=("$PKG_DIR/base.list")
+    [[ $INCLUDE_PROXMOX -eq 1 ]] && lists+=("$PKG_DIR/proxmox.list")
     [[ "$LOG_SHIPPER" != "none" ]] && lists+=("$PKG_DIR/logging-$LOG_SHIPPER.list")
-    # TODO: mapfile -t pkgs < <(for f in "${lists[@]}"; do read_pkg_list "$f"; done)
-    # TODO: chroot apt-get install -y --no-install-recommends "${pkgs[@]}"
+    log "Installing packages from: ${lists[*]}"
+    local pkgs=()
+    while IFS= read -r p; do pkgs+=("$p"); done < <(for f in "${lists[@]}"; do read_pkg_list "$f"; done)
+    log "Package count: ${#pkgs[@]}"
+    chroot_run apt-get install -y --no-install-recommends "${pkgs[@]}"
 }
 
 apply_overlay() {
     log "Applying rootfs overlay from $OVERLAY_DIR"
-    # TODO: rsync -a "$OVERLAY_DIR/" "$CHROOT/"
+    rsync -a "$OVERLAY_DIR/" "$CHROOT/"
     # TODO: apply $LOG_SHIPPER-specific overlay (overlay-$LOG_SHIPPER/) if present
 }
 
@@ -75,22 +117,32 @@ configure_readonly() {
 }
 
 generate_initramfs() {
+    if ! ls "$CHROOT/boot/"vmlinuz-* >/dev/null 2>&1; then
+        log "No kernel installed, skipping initramfs"
+        return
+    fi
     log "Regenerating initramfs"
-    # TODO: chroot update-initramfs -u -k all
+    chroot_run update-initramfs -u -k all
 }
 
 cleanup_chroot() {
     log "Cleaning chroot before pack"
-    # TODO: chroot apt-get clean
-    # TODO: rm -rf $CHROOT/var/lib/apt/lists/*
-    # TODO: truncate -s 0 $CHROOT/etc/machine-id        # regenerated on first boot
-    # TODO: rm -f $CHROOT/etc/ssh/ssh_host_*            # regenerated to RW slice on first boot
-    # TODO: rm -rf $CHROOT/var/cache/* $CHROOT/tmp/*
+    chroot_run apt-get clean
+    rm -rf "$CHROOT/var/lib/apt/lists/"*
+    rm -rf "$CHROOT/var/cache/"* "$CHROOT/tmp/"* "$CHROOT/var/tmp/"*
+    : > "$CHROOT/etc/machine-id"          # regenerated on first boot
+    rm -f "$CHROOT/etc/ssh/ssh_host_"*    # regenerated onto the RW slice on first boot
+    umount_chroot
 }
 
 pack_squashfs() {
     log "Packing squashfs to $OUT/rootfs.squashfs"
-    # TODO: mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -noappend
+    rm -f "$OUT/rootfs.squashfs"
+    # Exclude POSIX ACL xattrs (squashfs can't represent them, warns noisily)
+    # while preserving security.capability so setcap'd binaries (e.g. ping) keep working.
+    mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -noappend -no-progress \
+        -xattrs-exclude '^system\.posix_acl_'
+    ls -lh "$OUT/rootfs.squashfs"
 }
 
 build_image() {
@@ -103,6 +155,7 @@ build_image() {
 main() {
     check_prereqs
     mkdir -p "$WORK" "$OUT"
+    trap umount_chroot EXIT
     bootstrap_base
     configure_apt
     install_packages
