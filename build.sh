@@ -185,13 +185,21 @@ generate_initramfs() {
 }
 
 export_boot_artifacts() {
-    if [[ ! -L "$CHROOT/vmlinuz" ]]; then
-        log "No /vmlinuz symlink in chroot, skipping boot-artifact export"
+    # Pick the highest-versioned /boot/vmlinuz-*. Debian's linux-image-amd64
+    # creates a /vmlinuz root symlink, but Proxmox's kernel doesn't — globbing
+    # /boot handles both.
+    local kern initrd suffix
+    kern=$(ls -1 "$CHROOT"/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1)
+    if [[ -z "$kern" ]]; then
+        log "No /boot/vmlinuz-* in chroot, skipping boot-artifact export"
         return
     fi
-    log "Exporting kernel + initrd to $OUT/ (for QEMU direct boot)"
-    cp -L "$CHROOT/vmlinuz"   "$OUT/vmlinuz"
-    cp -L "$CHROOT/initrd.img" "$OUT/initrd.img"
+    suffix="${kern##*/vmlinuz-}"
+    initrd="$CHROOT/boot/initrd.img-$suffix"
+    [[ -f "$initrd" ]] || fail "Kernel $kern present but matching initrd $initrd missing"
+    log "Exporting kernel + initrd to $OUT/ (kernel: $suffix)"
+    cp -L "$kern"   "$OUT/vmlinuz"
+    cp -L "$initrd" "$OUT/initrd.img"
 }
 
 cleanup_chroot() {
