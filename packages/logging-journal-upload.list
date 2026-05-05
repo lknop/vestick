@@ -1,0 +1,7 @@
+# systemd-journal-upload pushes journal entries over HTTPS to a remote
+# systemd-journal-remote receiver. Native systemd, smallest footprint.
+# Caveat: NOT interoperable with Graylog / Splunk / rsyslog as a sender —
+# the receiver must be systemd-journal-remote.
+# Configure URL in overlay/etc/systemd/journal-upload.conf (TODO).
+
+systemd-journal-remote

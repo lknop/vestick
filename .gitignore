@@ -1,0 +1,16 @@
+# Build artifacts
+/work/
+/out/
+*.img
+*.iso
+*.squashfs
+*.tar.gz
+*.tar.zst
+
+# Editor / OS
+*.swp
+*.swo
+.DS_Store
+
+# Claude Code local state
+.claude/

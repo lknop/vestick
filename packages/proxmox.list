@@ -1,0 +1,15 @@
+# Proxmox VE essentials. Fetched from the pve-no-subscription apt repo at build time.
+# The proxmox-ve metapackage pulls pve-manager, qemu-server, pve-container, lxc-pve,
+# lxcfs, corosync, and the rest of the stack.
+
+proxmox-default-kernel
+proxmox-ve
+
+# Storage
+lvm2
+thin-provisioning-tools
+open-iscsi
+
+# Mail relay (Proxmox-recommended for cluster/notification mail).
+# Drop or replace if you don't need outgoing mail.
+postfix

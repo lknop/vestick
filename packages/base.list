@@ -1,0 +1,26 @@
+# Minimal additions on top of `debootstrap --variant=minbase trixie`.
+# Keep this list tight — every entry needs justification.
+
+# Trust roots and apt prerequisites
+ca-certificates
+gnupg
+
+# Locales (en_US.UTF-8 only, configured in overlay/)
+locales
+
+# Time sync — corosync is sensitive to clock skew
+chrony
+
+# Networking — Proxmox prefers ifupdown2 for bridges and VLANs
+ifupdown2
+bridge-utils
+ethtool
+iproute2
+iputils-ping
+
+# Remote access
+openssh-server
+
+# Minimal pager and editor (no full vim, no man-db)
+less
+vim-tiny

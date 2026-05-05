@@ -1,0 +1,6 @@
+# rsyslog as forwarding-only relay (no local files).
+# Default profile — best fit for ESXi migrants and any syslog receiver
+# (Graylog, Splunk, syslog-ng server, vRealize Log Insight, etc.).
+# Forward-only configuration lives in overlay/ (TODO).
+
+rsyslog

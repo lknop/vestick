@@ -1,0 +1,8 @@
+# Fluent Bit reads journald natively and ships in any format
+# (syslog / GELF / Loki / Elasticsearch / etc.). Best fit for modern
+# observability stacks.
+# Note: Debian's fluent-bit package may lag the upstream releases.
+# For latest, use the upstream repo at packages.fluentbit.io (configure
+# in build.sh::configure_apt).
+
+fluent-bit
