@@ -19,6 +19,13 @@ overlayroot
 e2fsprogs
 busybox
 
+# growpart for first-boot resize of the state partition. Lets us ship a
+# small image and have it expand to fill the real device on first boot.
+# gdisk provides sgdisk, which growpart calls for GPT disks (it's a
+# Recommends of cloud-guest-utils so --no-install-recommends drops it).
+cloud-guest-utils
+gdisk
+
 # Trust roots and apt prerequisites
 ca-certificates
 gnupg

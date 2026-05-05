@@ -1,0 +1,14 @@
+[Unit]
+Description=VEyage persistent state partition
+After=local-fs-pre.target
+Before=local-fs.target
+ConditionPathExists=/dev/disk/by-label/state
+
+[Mount]
+What=/dev/disk/by-label/state
+Where=/mnt/state
+Type=ext4
+Options=defaults,noatime
+
+[Install]
+WantedBy=local-fs.target

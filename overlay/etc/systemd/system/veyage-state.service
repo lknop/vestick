@@ -1,0 +1,14 @@
+[Unit]
+Description=VEyage state partition setup (first-boot init + binds)
+After=mnt-state.mount
+Wants=mnt-state.mount
+Before=ssh.service ssh.socket sshd-keygen.service networking.service
+ConditionPathIsMountPoint=/mnt/state
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/veyage-state-init
+
+[Install]
+WantedBy=multi-user.target

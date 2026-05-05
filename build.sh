@@ -209,6 +209,9 @@ build_image() {
     [[ -f "$squashfs" ]] || fail "Missing squashfs at $squashfs"
     [[ -f "$OUT/vmlinuz" && -f "$OUT/initrd.img" ]] || fail "Missing kernel/initrd in $OUT"
 
+    # state_mb is just the image's initial size. veyage-state-init grows it
+    # to fill the actual device on first boot via growpart+resize2fs, so we
+    # ship a small image and let it expand on whatever USB/SD it's dd'd to.
     local squash_size_mb esp_mb=128 state_mb=256 total_mb
     squash_size_mb=$(( ( $(stat -c%s "$squashfs") + 1024*1024 - 1 ) / (1024*1024) ))
     total_mb=$(( esp_mb + squash_size_mb + state_mb + 4 ))

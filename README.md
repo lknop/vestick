@@ -102,6 +102,12 @@ The `veyage.img` produced by `build.sh` is GPT-partitioned for UEFI:
 | 2 | rootfs (raw squashfs) | sized to fit | the read-only root, mounted by the kernel at boot |
 | 3 | state (ext4, label `state`) | 256 MB | for persistent `/var/lib/pve-cluster`, network config, SSH host keys, etc. **Not yet wired into the running system.** |
 
+## Documentation
+
+- [docs/architecture.md](docs/architecture.md) — settled design decisions (RO model, overlayroot patch rationale, UEFI boot path, GPT layout, write boundaries).
+- [docs/roadmap.md](docs/roadmap.md) — phase-by-phase plan with current status. Read this if you want to know what's done and what's next.
+- [docs/build-internals.md](docs/build-internals.md) — non-obvious gotchas with reasons (required package rationale, the overlayroot patch, LXC build env quirks). Read this before changing anything that touches the chroot, the initramfs, loop devices, or `/dev` handling.
+
 ## License
 
 [AGPL-3.0-or-later](LICENSE), matching Proxmox VE's license.
