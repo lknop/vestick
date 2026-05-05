@@ -1,0 +1,58 @@
+#!/bin/bash
+# VEyage first-boot identity setup. Prompts the operator at the console
+# for hostname and root password; writes them through to the persistent
+# state partition. Idempotent via a marker in /mnt/state.
+#
+# We don't use systemd-firstboot.service because it runs Before=sysinit.target,
+# way before veyage-state.service binds /mnt/state — its writes would land
+# in the overlay upper and be clobbered by our binds. Running our own
+# helper after veyage-state sidesteps that ordering nightmare.
+
+set -euo pipefail
+
+STATE=/mnt/state
+MARKER="$STATE/.veyage-firstboot-done"
+
+[[ -e "$MARKER" ]] && exit 0
+
+mountpoint -q "$STATE" || { echo "veyage-firstboot: $STATE not mounted" >&2; exit 1; }
+
+echo
+echo "=== VEyage first-boot identity setup ==="
+
+current=$(cat /etc/hostname 2>/dev/null || echo "veyage")
+read -rp "System hostname [$current]: " hostname
+hostname="${hostname:-$current}"
+echo "$hostname" > /etc/hostname
+hostname "$hostname"
+
+# Root password: prompt twice, hash via perl crypt() (perl-base ships with
+# minbase, so always available), write directly into /mnt/state/etc/shadow.
+# Can't shell out to `chpasswd` — it uses rename(2) on /etc/shadow, which
+# fails with EXDEV across the bind mount. Writing within /mnt/state keeps
+# the temp file and target on the same filesystem.
+while :; do
+    read -rsp "Root password: " pw1; echo
+    read -rsp "Confirm root password: " pw2; echo
+    [[ -n "$pw1" && "$pw1" == "$pw2" ]] && break
+    echo "Passwords don't match (or empty), try again." >&2
+done
+
+hash=$(perl -e '
+    my @c = ("A".."Z","a".."z",0..9,".","/");
+    my $salt = join "", map { $c[int rand @c] } 1..16;
+    print crypt($ARGV[0], "\$6\$" . $salt . "\$");
+' "$pw1")
+
+shadow="$STATE/etc/shadow"
+[[ -f "$shadow" ]] || { echo "veyage-firstboot: $shadow missing — was etc/shadow seeded?" >&2; exit 1; }
+tmp="${shadow}.veyage.$$"
+awk -v h="$hash" -F: 'BEGIN{OFS=":"} $1=="root"{$2=h} {print}' "$shadow" > "$tmp"
+chmod 640 "$tmp"
+chown root:shadow "$tmp" 2>/dev/null || true
+mv "$tmp" "$shadow"
+
+unset pw1 pw2
+
+echo "veyage-firstboot: hostname=$hostname, root password set"
+touch "$MARKER"

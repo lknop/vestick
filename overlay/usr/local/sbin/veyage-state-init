@@ -43,23 +43,30 @@ fi
 PERSIST_PATHS=(
     etc/network
     etc/ssh
+    etc/hostname
+    etc/shadow
     var/lib/pve-cluster
     var/lib/rrdcached
 )
 
-if [[ ! -e "$MARKER" ]]; then
-    echo "veyage-state: first boot, initializing state from squashfs"
-    for p in "${PERSIST_PATHS[@]}"; do
-        src="/$p"
-        dest="$STATE/$p"
-        if [[ -e "$src" && ! -e "$dest" ]]; then
-            mkdir -p "$(dirname "$dest")"
-            cp -a "$src" "$dest"
-        fi
-    done
+# Seed any missing path on /mnt/state from the running squashfs. Per-path
+# idempotent (skips entries that already exist on /mnt/state), so adding
+# new entries to PERSIST_PATHS in a later build picks them up automatically
+# on the next boot — without re-bootstrapping the whole state partition.
+for p in "${PERSIST_PATHS[@]}"; do
+    src="/$p"
+    dest="$STATE/$p"
+    if [[ -e "$src" && ! -e "$dest" ]]; then
+        mkdir -p "$(dirname "$dest")"
+        cp -a "$src" "$dest"
+    fi
+done
 
+if [[ ! -e "$MARKER" ]]; then
+    echo "veyage-state: first boot, regenerating per-host SSH keys"
     # Replace build-time SSH host keys with fresh per-host keys. Without this,
-    # every image built from the same source would have identical keys.
+    # every image built from the same source would have identical keys. Gated
+    # on the marker so the keys are only regenerated once per state partition.
     if [[ -d "$STATE/etc/ssh" ]]; then
         rm -f "$STATE/etc/ssh/"ssh_host_*_key "$STATE/etc/ssh/"ssh_host_*_key.pub
         for kt in rsa ecdsa ed25519; do
