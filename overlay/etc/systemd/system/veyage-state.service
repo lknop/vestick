@@ -2,7 +2,7 @@
 Description=VEyage state partition setup (first-boot init + binds)
 After=mnt-state.mount
 Wants=mnt-state.mount
-Before=ssh.service ssh.socket sshd-keygen.service networking.service
+Before=ssh.service ssh.socket sshd-keygen.service networking.service pve-cluster.service rrdcached.service
 ConditionPathIsMountPoint=/mnt/state
 
 [Service]
