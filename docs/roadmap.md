@@ -7,8 +7,8 @@ Phase-by-phase plan with current status. Update **after** each milestone is comm
 - Phase 1 (Debian base squashfs build): ✅ done
 - Phase 2 (kernel + initramfs + read-only root via overlayroot): ✅ done
 - Phase 3 (UEFI bootable disk image): ✅ done
-- Phase 4 (state-partition wiring + auto-resize): 🚧 in progress
-- Phase 5 (Proxmox VE layer): not started
+- Phase 4 (state-partition wiring + auto-resize): ✅ done
+- Phase 5 (Proxmox VE layer): 🟡 next
 - Phase 6 (USB-stick deploy + real hardware test): not started
 - Phase 7 (size reduction): not started
 - Phase 8 (CI / GitHub Actions reproducible build): not started
