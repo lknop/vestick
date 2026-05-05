@@ -2,7 +2,7 @@
 
 Minimal Debian Trixie image with a read-only root filesystem, designed as a base for Proxmox VE running from USB stick or SD card.
 
-> **Status: early development.** The build script is scaffolding; nothing produces a bootable image yet.
+> **Status: early development.** The Debian-base path boots end-to-end in QEMU under UEFI (squashfs root + tmpfs overlay via `overlayroot`, `chrony` / `systemd-logind` / `ssh` all up). The Proxmox layer (`INCLUDE_PROXMOX=1`) is not wired yet, and the persistent state partition is created but not mounted/bound into the running system.
 
 ## What this is
 
@@ -34,18 +34,23 @@ VM and container storage should live **off the boot media** (separate disk, NFS,
 - Debian or Ubuntu on **amd64**. Proxmox VE has no aarch64 build target, so the build host (or a VM/LXC on it) must be x86_64. macOS aarch64 hosts can use a Lima x86_64 VM (slow, QEMU-emulated) or an amd64 LXC/VM elsewhere.
 - Root (or sudo) access.
 - ~5 GB free disk for the build chroot and output image.
-- Packages: `debootstrap squashfs-tools qemu-utils dosfstools` (more pinned in the build script).
+- Packages on the build host: `debootstrap squashfs-tools rsync curl gpg ca-certificates dosfstools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
+- **Loop devices and KVM** must be available. Inside a Proxmox LXC build host, this means passing through `/dev/loop[0-N]`, `/dev/loop-control`, `/dev/kvm` and the relevant cgroup permissions. See `lxc.cgroup2.devices.allow` / `lxc.mount.entry` examples in the project notes.
 
 ## Quickstart
 
 ```sh
-sudo ./build.sh
+sudo INCLUDE_PROXMOX=0 ./build.sh    # Debian-only, boots cleanly today
+./test-vm.sh                         # Boots the disk image in QEMU under UEFI
 ```
+
+`./test-vm.sh` defaults to `MODE=image` (full UEFI boot of `out/veyage.img`). `MODE=direct` skips GRUB and uses QEMU's `-kernel` / `-initrd` against `out/rootfs.squashfs` for faster iteration.
 
 Environment variables:
 
 | Variable | Default | Notes |
 |---|---|---|
+| `INCLUDE_PROXMOX` | `1` | `0` for a Debian-only build (no Proxmox repo, Debian kernel) |
 | `LOG_SHIPPER` | `rsyslog` | `rsyslog` \| `journal-upload` \| `fluent-bit` \| `none` |
 | `SUITE` | `trixie` | Debian release codename |
 | `MIRROR` | `http://deb.debian.org/debian` | Debian apt mirror |
@@ -69,15 +74,33 @@ Environment variables:
 
 ```
 build.sh                   Top-level build script
+test-vm.sh                 Boot the built image in QEMU (UEFI / direct kernel)
 packages/                  Package lists (one per line, `#` for comments)
   base.list                Minimal Debian additions on top of minbase
-  proxmox.list             Proxmox VE essentials
+  kernel-debian.list       Debian kernel (used when INCLUDE_PROXMOX=0)
+  proxmox.list             Proxmox VE essentials (used when INCLUDE_PROXMOX=1)
   logging-rsyslog.list     Logging shipper packages (one per profile)
   logging-journal-upload.list
   logging-fluent-bit.list
 overlay/                   Files merged into chroot before squashing
   etc/systemd/journald.conf.d/volatile.conf
+  etc/overlayroot.conf
+  usr/local/bin/veyage-diag  Boot-time mount-topology dump (init=… debug)
+out/                       Build artifacts (gitignored)
+  rootfs.squashfs          The read-only root layer
+  vmlinuz, initrd.img      Extracted from the chroot for direct kernel boot
+  veyage.img               Bootable UEFI disk image (GPT: ESP + rootfs + state)
 ```
+
+## Disk image layout
+
+The `veyage.img` produced by `build.sh` is GPT-partitioned for UEFI:
+
+| # | Type | Size | Notes |
+|---|---|---|---|
+| 1 | EFI System (FAT32, label `EFI`) | 128 MB | `BOOTX64.EFI` (self-contained, built with `grub-mkstandalone`), `vmlinuz`, `initrd.img` |
+| 2 | rootfs (raw squashfs) | sized to fit | the read-only root, mounted by the kernel at boot |
+| 3 | state (ext4, label `state`) | 256 MB | for persistent `/var/lib/pve-cluster`, network config, SSH host keys, etc. **Not yet wired into the running system.** |
 
 ## License
 
