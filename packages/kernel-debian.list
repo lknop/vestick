@@ -1,0 +1,5 @@
+# Debian stock kernel — used when building without Proxmox layer
+# (INCLUDE_PROXMOX=0). When Proxmox is included, the proxmox-default-kernel
+# from packages/proxmox.list takes its place.
+
+linux-image-amd64

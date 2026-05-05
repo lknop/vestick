@@ -1,0 +1,32 @@
+#!/bin/bash
+# Diagnostic script. Boot with `init=/usr/local/bin/veyage-diag` on the kernel
+# cmdline to dump mount topology + writability without systemd interfering.
+exec > /dev/console 2>&1
+
+echo "=========== veyage-diag: cmdline ==========="
+cat /proc/cmdline
+echo "=========== mount ==========="
+mount
+echo "=========== findmnt ==========="
+findmnt 2>/dev/null || mount | sort
+echo "=========== /proc/filesystems (overlay?) ==========="
+grep -i overlay /proc/filesystems || echo "(no overlay registered)"
+echo "=========== ls -la / ==========="
+ls -la / | head -25
+echo "=========== ls -la /var ==========="
+ls -la /var
+echo "=========== ls -la /var/lib ==========="
+ls -la /var/lib | head -20
+echo "=========== write tests ==========="
+for d in / /etc /var /var/lib /var/log; do
+    if touch "$d/.veyage-test" 2>/dev/null; then
+        echo "$d: WRITABLE"
+        rm -f "$d/.veyage-test"
+    else
+        echo "$d: READ-ONLY ($(touch $d/.veyage-test 2>&1))"
+    fi
+done
+echo "=========== veyage-diag: DONE, halting in 3s ==========="
+sleep 3
+poweroff -f 2>/dev/null
+exec /sbin/halt -f
