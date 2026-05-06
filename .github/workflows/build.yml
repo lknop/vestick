@@ -1,0 +1,92 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.flavor }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - flavor: debian
+            proxmox: 0
+          - flavor: pve
+            proxmox: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            debootstrap squashfs-tools gdisk grub-efi-amd64-bin \
+            dosfstools rsync wget
+
+      - name: Free disk space
+        # PVE build needs ~5 GB scratch (chroot + squashfs + image). Default
+        # ubuntu-24.04 runner has ~14 GB free; nuking preinstalled language
+        # toolchains we don't use frees another ~10–15 GB of headroom.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+          df -h /
+
+      - name: Build image
+        env:
+          INCLUDE_PROXMOX: ${{ matrix.proxmox }}
+        run: sudo -E ./build.sh
+
+      - name: Stage artifacts
+        run: |
+          mv out/veyage.img veyage-${{ matrix.flavor }}.img
+          sha256sum veyage-${{ matrix.flavor }}.img \
+            > veyage-${{ matrix.flavor }}.img.sha256
+          ls -lh veyage-${{ matrix.flavor }}.img*
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: veyage-${{ matrix.flavor }}
+          path: |
+            veyage-${{ matrix.flavor }}.img
+            veyage-${{ matrix.flavor }}.img.sha256
+          retention-days: 14
+          if-no-files-found: error
+
+  release:
+    name: attach images to release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create release if missing, then upload
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber \
+            artifacts/veyage-*.img \
+            artifacts/veyage-*.img.sha256

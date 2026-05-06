@@ -11,7 +11,7 @@ Phase-by-phase plan with current status. Update **after** each milestone is comm
 - Phase 5 (Proxmox VE layer): ✅ done (apt repo, kernel-export glob, state binds, vmbr0 wizard, hostname/root-pw wizard; QEMU acceptance tests pass for both first and second boot)
 - Phase 6 (USB-stick deploy + real hardware test): 🟡 next
 - Phase 7 (size reduction): not started
-- Phase 8 (CI / GitHub Actions reproducible build): not started
+- Phase 8 (CI / GitHub Actions reproducible build): 🟡 wired (`.github/workflows/build.yml`); needs first push to verify the runner actually builds successfully
 
 ## Phase 1 — Debian base squashfs
 

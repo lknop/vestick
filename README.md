@@ -58,6 +58,18 @@ Environment variables:
 | `WORK` | `./work` | Build chroot location |
 | `OUT` | `./out` | Output image location |
 
+## Prebuilt images
+
+Every push to `main` and every PR triggers `.github/workflows/build.yml`, which builds both the Debian-only and the `INCLUDE_PROXMOX=1` variants on a fresh `ubuntu-24.04` runner and uploads the resulting `veyage-debian.img` and `veyage-pve.img` (plus matching `.sha256` files) as workflow artifacts (14-day retention).
+
+Pushing a tag (`v*`) additionally creates a GitHub Release with both images attached, no per-file size limit aside from GitHub's 2 GB cap. Useful for `dd`-to-USB without setting up a build host:
+
+```sh
+gh release download vX.Y.Z --pattern 'veyage-pve.img*'
+sha256sum -c veyage-pve.img.sha256
+sudo dd if=veyage-pve.img of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
 ## Logging shipper choice
 
 `journald` is set to RAM-only (`Storage=volatile`) so the boot media takes no log writes. One of three shippers carries logs off the box:
