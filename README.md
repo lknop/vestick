@@ -66,7 +66,7 @@ sudo INCLUDE_PROXMOX=1 ./build.sh    # full Proxmox build (default)
 ./test-vm.sh                         # boots out/veyage.img in QEMU under UEFI
 ```
 
-`./test-vm.sh` defaults to `MODE=image` (full UEFI boot of `out/veyage.img`). The QEMU command line includes a virtio-net NIC by default so the network stack actually has something to bring up. `MODE=direct` skips GRUB and uses QEMU's `-kernel` / `-initrd` against `out/rootfs.squashfs` for faster iteration on the kernel/initramfs path (mainly for the `INCLUDE_PROXMOX=0` flow).
+`./test-vm.sh` runs a full UEFI boot of `out/veyage.img` through GRUB. The QEMU command line includes a virtio-net NIC by default so the network stack actually has something to bring up.
 
 Environment variables (build):
 
