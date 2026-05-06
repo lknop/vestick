@@ -216,10 +216,20 @@ UUID=$pmxcfs_uuid /var/lib/pve-cluster ext4  defaults,noatime,nofail        0  2
 # Volatile mounts. Logs go to RAM (journald is Storage=volatile via the
 # overlay drop-in; rsyslog forwards off-box). rrdcached on tmpfs trades
 # lost-on-reboot perf graphs for ~80% less routine flash write rate.
+#
+# /var/lib/systemd is tmpfs because logind's StateDirectory= would
+# otherwise fail on a ro root. Decision documented in
+# docs/voyage-flavor.md — for a Proxmox-on-USB use case the only
+# user-visible effect of losing this dir on reboot is that anacron-style
+# systemd timers (apt-daily, fstrim, e2scrub_all) re-fire once per boot
+# until next scheduled hour, all benign here. systemd-creds-encrypted
+# secrets and timesyncd state DO matter generally but neither applies
+# to this build.
 tmpfs            /tmp                 tmpfs nodev,nosuid,size=512M           0  0
 tmpfs            /var/tmp             tmpfs nodev,nosuid,size=128M           0  0
 tmpfs            /var/log             tmpfs nodev,nosuid,size=128M           0  0
 tmpfs            /var/lib/rrdcached   tmpfs nodev,nosuid,size=128M,mode=755  0  0
+tmpfs            /var/lib/systemd     tmpfs nodev,nosuid,size=64M            0  0
 EOF
     # Pre-create the mount points so systemd doesn't have to.
     mkdir -p "$ROOT_MNT/boot/efi" \

@@ -187,21 +187,27 @@ directives — we haven't enumerated them yet.
 
 Concrete next-session checklist for the ro-root boot:
 
-1. In the chroot of a fresh build, audit:
+1. **`/var/lib/systemd` → tmpfs** is already encoded in `build.sh`'s
+   `write_fstab` (commit baked in). Decided after weighing the contents
+   of that dir: timer stamps, random-seed, optional linger, optional
+   credential.secret. For Proxmox-on-USB the only visible effect of
+   losing it on reboot is that anacron-style timers (apt-daily, fstrim,
+   e2scrub_all) re-fire once per boot until next scheduled hour, all
+   benign. Revisit if a real user trips over `systemd-creds`-encrypted
+   secrets or timesyncd state.
+2. Boot a ro-root build with the change in (1). If logind starts cleanly,
+   the rest of the chain (firstboot wizard, network-init, getty) should
+   come up — confirm via the existing expect test.
+3. If something else fails with a `STATE_DIRECTORY` / `CACHE_DIRECTORY`
+   error, audit the chroot:
    ```
    grep -lE '^(State|Cache|Logs)Directory=' /usr/lib/systemd/system/*.service
    ```
-   For each hit, decide: tmpfs (ephemeral state, OK to lose), or
-   bind-from-elsewhere-persistent (has to survive reboots).
-2. Add corresponding tmpfs lines to the fstab written by `build.sh`:
-   ```
-   tmpfs  /var/lib/systemd  tmpfs  nodev,nosuid,size=64M  0  0
-   ```
-   (one line per service that doesn't need persistence).
-3. Boot a ro-root build. If logind starts cleanly, retry the trace
-   experiment — it'll give us much more accurate data about the
-   normal (ro-root) boot's write pattern.
-4. Iterate on tmpfs picks until clean boot.
+   For each hit, decide tmpfs vs persistent (default tmpfs unless the
+   directory has data the operator would miss).
+4. Re-run the trace experiment on a ro-root boot once it's clean —
+   gives us a much more accurate picture of the actual write pattern
+   than the rw-root trace did.
 
 The whole effort is bounded — it's a small number of services and
-each fix is one fstab line. Just need to grind through them.
+each fix is one fstab line.
