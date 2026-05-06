@@ -22,4 +22,16 @@ trap 'sync; mount -o remount,ro / 2>/dev/null || true' EXIT
 
 mkdir -p /var/lib/veyage
 systemd-firstboot --prompt-hostname --prompt-root-password
+
+# Generate /root/.ssh/id_rsa during the rw window. pvecm updatecerts
+# (run by pveproxy.service ExecStartPre on every boot) needs this key
+# to exist; without it, every boot logs "Saving key '/root/.ssh/id_rsa'
+# failed: Read-only file system". One per machine — image is shared, so
+# we don't pre-bake a key in the image (security: shared key everywhere).
+if [[ ! -f /root/.ssh/id_rsa ]]; then
+    mkdir -p /root/.ssh
+    chmod 700 /root/.ssh
+    ssh-keygen -t rsa -b 2048 -N '' -f /root/.ssh/id_rsa -C "root@$(hostname)"
+fi
+
 touch "$MARKER"

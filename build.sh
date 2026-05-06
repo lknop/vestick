@@ -35,12 +35,18 @@ declare -a LOOPS=()
 declare -A LOOP_FOR=()
 
 cleanup() {
-    # Recursive lazy umount catches the bind-to-self plus all nested
-    # pseudo-fs and the ESP bind. Then free the loop devices. Best-effort —
-    # called from EXIT so don't fail the build.
+    # Sync before unmounting — `umount -l` is lazy, so dirty buffers can
+    # outlive the umount call and miss the subsequent `losetup -d`. That
+    # leaves the image in a half-flushed state ext4 then refuses to mount
+    # cleanly. Explicit sync + non-lazy umount of the inner mounts first,
+    # then lazy as fallback for anything still busy.
+    sync
     if [[ -n "${ROOT_MNT:-}" ]] && mountpoint -q "$ROOT_MNT" 2>/dev/null; then
-        umount -Rl "$ROOT_MNT" 2>/dev/null || true
+        umount -R "$ROOT_MNT" 2>/dev/null \
+            || umount -Rl "$ROOT_MNT" 2>/dev/null \
+            || true
     fi
+    sync
     local lp
     for lp in "${LOOPS[@]}"; do
         losetup -d "$lp" 2>/dev/null || true
