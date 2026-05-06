@@ -27,10 +27,17 @@ echo "$hostname" > /etc/hostname
 hostname "$hostname"
 
 # Root password: prompt twice, hash via perl crypt() (perl-base ships with
-# minbase, so always available), write directly into /mnt/state/etc/shadow.
-# Can't shell out to `chpasswd` — it uses rename(2) on /etc/shadow, which
-# fails with EXDEV across the bind mount. Writing within /mnt/state keeps
-# the temp file and target on the same filesystem.
+# minbase, so always available), rewrite /etc/shadow in place.
+#
+# Two write traps to know about:
+#  1. chpasswd uses rename(2) on /etc/shadow which fails with EXDEV across
+#     a bind mount — different filesystems.
+#  2. Even a manual `mv tmp /mnt/state/etc/shadow` succeeds at the FS layer
+#     but breaks the bind: rename creates a new inode at the path, while
+#     /etc/shadow's bind mount still points at the OLD inode. PAM reads via
+#     the bind and sees stale shadow → login fails.
+# So: hash the password, write a new shadow to a tmpfs temp, then `cat >`
+# the bound path. The write preserves the inode behind the bind.
 while :; do
     read -rsp "Root password: " pw1; echo
     read -rsp "Confirm root password: " pw2; echo
@@ -44,13 +51,13 @@ hash=$(perl -e '
     print crypt($ARGV[0], "\$6\$" . $salt . "\$");
 ' "$pw1")
 
-shadow="$STATE/etc/shadow"
+shadow=/etc/shadow
 [[ -f "$shadow" ]] || { echo "veyage-firstboot: $shadow missing — was etc/shadow seeded?" >&2; exit 1; }
-tmp="${shadow}.veyage.$$"
+tmp=$(mktemp /tmp/shadow.veyage.XXXXXX)
+trap 'rm -f "$tmp"' EXIT
 awk -v h="$hash" -F: 'BEGIN{OFS=":"} $1=="root"{$2=h} {print}' "$shadow" > "$tmp"
-chmod 640 "$tmp"
-chown root:shadow "$tmp" 2>/dev/null || true
-mv "$tmp" "$shadow"
+grep -q "^root:" "$tmp" || { echo "veyage-firstboot: shadow rewrite produced no root line" >&2; exit 1; }
+cat "$tmp" > "$shadow"
 
 unset pw1 pw2
 
