@@ -1,7 +1,7 @@
 [Unit]
 Description=VEyage first-boot network setup (interactive)
 After=veyage-state.service
-Before=networking.service
+Before=networking.service getty.target
 RequiresMountsFor=/etc/network
 
 [Service]

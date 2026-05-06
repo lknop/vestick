@@ -1,7 +1,7 @@
 [Unit]
 Description=VEyage first-boot identity setup (interactive: hostname + root password)
 After=veyage-state.service
-Before=veyage-network-init.service networking.service
+Before=veyage-network-init.service networking.service getty.target
 RequiresMountsFor=/mnt/state
 
 [Service]
