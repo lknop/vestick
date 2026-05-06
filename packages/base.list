@@ -3,8 +3,14 @@
 
 # Init system. minbase doesn't ship one — without this, kernel boot drops
 # to the initramfs recovery shell on `/sbin/init` not found. systemd-sysv
-# pulls systemd as a hard dep and provides /sbin/init.
+# pulls systemd as a hard dep and provides /sbin/init. libpam-systemd +
+# libnss-systemd are Recommends of systemd-sysv, dropped by
+# --no-install-recommends — without them systemd-logind crashloops on
+# boot ("Failed to start systemd-logind.service") and login sessions
+# don't get systemd scopes.
 systemd-sysv
+libpam-systemd
+libnss-systemd
 dbus
 
 # Filesystem + boot-time resize tooling. e2fsprogs gives us mkfs.ext4,

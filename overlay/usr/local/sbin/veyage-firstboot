@@ -1,0 +1,25 @@
+#!/bin/bash
+# VEyage first-boot identity setup. Wraps systemd-firstboot in a brief
+# remountrw window so it can write /etc/hostname + /etc/shadow on a
+# normally-ro root. Sentinel file in /var/lib/veyage gates re-runs.
+#
+# Why not ConditionFirstBoot=yes on the unit: systemd's first-boot signal
+# is tied to /etc/machine-id. With / mounted ro at PID 1 init, systemd
+# can't write a persistent machine-id and falls back to a transient one
+# in /run, which makes ConditionFirstBoot's behavior unreliable for our
+# case. Our own sentinel is independent of that.
+
+set -euo pipefail
+
+MARKER=/var/lib/veyage/firstboot-done
+
+if [[ -e "$MARKER" ]]; then
+    exit 0
+fi
+
+mount -o remount,rw /
+trap 'sync; mount -o remount,ro / 2>/dev/null || true' EXIT
+
+mkdir -p /var/lib/veyage
+systemd-firstboot --prompt-hostname --prompt-root-password
+touch "$MARKER"

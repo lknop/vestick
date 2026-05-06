@@ -234,16 +234,27 @@ install_grub() {
     # during a remountrw window, no custom mkstandalone trickery. --removable
     # plants BOOTX64.EFI so any UEFI firmware boots it without touching NVRAM
     # (essential for "dd to a USB stick on machine A, boot on machine B").
+    #
+    # --modules= is critical here. grub-install's default builds a thin EFI
+    # stub that expects to load further modules from /EFI/<name>/x86_64-efi/
+    # on the ESP at runtime — but with --removable that directory isn't
+    # populated, so the stub can't read ext4 to find /boot/grub/grub.cfg
+    # and drops to `grub rescue> error: unknown filesystem`. Baking the
+    # essentials into the stub avoids that. Cost: BOOTX64.EFI ~1 MB instead
+    # of ~150 KB.
     chroot_run grub-install \
         --target=x86_64-efi \
         --efi-directory=/boot/efi \
         --bootloader-id=VEyage \
         --removable \
         --no-nvram \
-        --recheck
+        --recheck \
+        --modules='part_gpt fat ext2 normal linux configfile echo search search_fs_uuid search_fs_file search_label test true regexp gettext loadenv all_video gfxterm gfxterm_background reboot halt'
     # Console: ttyS0 first, tty0 last so /dev/console = tty0 — best for
     # bare-metal-with-monitor users; serial users still see kernel printk
-    # because both consoles are listed.
+    # because both consoles are listed. /etc/default/grub is for the
+    # operator's future update-grub runs — we don't run update-grub at
+    # build time (see why below).
     cat > "$ROOT_MNT/etc/default/grub" <<'EOF'
 GRUB_DEFAULT=0
 GRUB_TIMEOUT=2
@@ -252,7 +263,49 @@ GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 console=tty0 panic=10"
 GRUB_CMDLINE_LINUX=""
 GRUB_TERMINAL=console
 EOF
-    chroot_run update-grub
+
+    # Hand-write grub.cfg instead of running update-grub. /etc/grub.d/10_linux
+    # has a loop-AES-era guard that `exit 0`s silently when GRUB_DEVICE is
+    # /dev/loopN backed by a regular file (build.sh:51 of 10_linux). At
+    # build time the chroot's root *is* exactly that, so update-grub
+    # produces a kernel-less menu and the image won't boot. After install
+    # on a real device the operator's `update-grub` (during a remountrw
+    # window after `apt upgrade`-ing the kernel) works normally because
+    # the root is then /dev/sdaN, not a loop.
+    local kver root_uuid
+    kver=$(ls -1 "$ROOT_MNT"/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1 | sed 's|.*/vmlinuz-||')
+    [[ -n "$kver" ]] || fail "No /boot/vmlinuz-* in chroot — kernel install failed?"
+    root_uuid=$(blkid -s UUID -o value "${LOOP_FOR[2]}")
+    log "Writing minimal /boot/grub/grub.cfg (kernel=$kver, root UUID=$root_uuid)"
+    mkdir -p "$ROOT_MNT/boot/grub"
+    cat > "$ROOT_MNT/boot/grub/grub.cfg" <<EOF
+# Minimal grub.cfg written by VEyage's build.sh because update-grub's
+# 10_linux script silently bails out on loop-mounted root at build time.
+# After first dd to a real device, \`update-grub\` (run during a
+# remountrw window after \`apt upgrade\` of grub-efi-amd64 or the kernel)
+# regenerates this file in the standard Debian style.
+
+set timeout=2
+set default=0
+
+insmod part_gpt
+insmod ext2
+insmod search
+insmod search_fs_uuid
+
+if loadfont \$prefix/fonts/unicode.pf2 ; then
+    insmod gfxterm
+    set gfxmode=auto
+    terminal_output gfxterm
+fi
+
+search --no-floppy --fs-uuid --set=root $root_uuid
+
+menuentry 'VEyage' {
+    linux /boot/vmlinuz-$kver root=UUID=$root_uuid ro console=ttyS0 console=tty0 panic=10
+    initrd /boot/initrd.img-$kver
+}
+EOF
 }
 
 prepare_first_boot() {

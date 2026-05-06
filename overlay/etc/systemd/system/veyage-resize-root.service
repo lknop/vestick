@@ -1,6 +1,6 @@
 [Unit]
 Description=VEyage first-boot rootfs resize (grow to fill device)
-ConditionFirstBoot=yes
+ConditionPathExists=!/var/lib/veyage/resized
 After=local-fs.target
 Before=multi-user.target
 

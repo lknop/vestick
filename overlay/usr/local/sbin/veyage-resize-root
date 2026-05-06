@@ -9,6 +9,9 @@
 
 set -euo pipefail
 
+MARKER=/var/lib/veyage/resized
+[[ -e "$MARKER" ]] && exit 0
+
 root_dev=$(findmnt -nro SOURCE /)
 parent_disk=$(lsblk -nro PKNAME "$root_dev" 2>/dev/null | head -1)
 part_num=$(grep -oE '[0-9]+$' <<<"$root_dev" || true)
@@ -29,8 +32,10 @@ fi
 echo "veyage-resize-root: grew /dev/$parent_disk partition $part_num"
 
 # ext4 online resize requires the FS to be rw. Briefly flip / rw, resize,
-# flip back. This is the "official" rw window outside operator control.
+# write the sentinel so we don't repeat, flip back.
 mount -o remount,rw /
 resize2fs "$root_dev" >/dev/null 2>&1 && echo "veyage-resize-root: resized $root_dev"
+mkdir -p "$(dirname "$MARKER")"
+touch "$MARKER"
 sync
 mount -o remount,ro /
