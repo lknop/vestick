@@ -1,0 +1,36 @@
+#!/bin/bash
+# Grow / to fill its device on first boot. Lets us ship a small image
+# that expands when dd'd to a larger USB stick.
+#
+# Triggered as a oneshot from veyage-resize-root.service which gates on
+# ConditionFirstBoot=yes. Idempotent enough to be safe if it ever runs
+# again — growpart returns non-zero when there's nothing to grow,
+# resize2fs on an already-full FS is a no-op.
+
+set -euo pipefail
+
+root_dev=$(findmnt -nro SOURCE /)
+parent_disk=$(lsblk -nro PKNAME "$root_dev" 2>/dev/null | head -1)
+part_num=$(grep -oE '[0-9]+$' <<<"$root_dev" || true)
+
+if [[ -z "$parent_disk" || -z "$part_num" ]]; then
+    echo "veyage-resize-root: $root_dev isn't on a normal partitioned disk, skipping" >&2
+    exit 0
+fi
+
+# If image was dd'd to a larger device, GPT's secondary header still points
+# at the original end. -e moves it to the actual end so growpart can work.
+sgdisk -e "/dev/$parent_disk" >/dev/null 2>&1 || true
+
+if ! growpart "/dev/$parent_disk" "$part_num" >/dev/null 2>&1; then
+    echo "veyage-resize-root: nothing to grow"
+    exit 0
+fi
+echo "veyage-resize-root: grew /dev/$parent_disk partition $part_num"
+
+# ext4 online resize requires the FS to be rw. Briefly flip / rw, resize,
+# flip back. This is the "official" rw window outside operator control.
+mount -o remount,rw /
+resize2fs "$root_dev" >/dev/null 2>&1 && echo "veyage-resize-root: resized $root_dev"
+sync
+mount -o remount,ro /

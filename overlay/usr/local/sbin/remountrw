@@ -1,0 +1,31 @@
+#!/bin/bash
+# remountrw — flip the rootfs from ro to rw for config edits / apt upgrade.
+# Uses systemd-run with --on-active so the auto-remount-ro fires after a
+# fixed window even if the operator forgets `remountro`. Default 10 min;
+# override with REMOUNT_RW_TIMEOUT=<systemd time spec>.
+
+set -euo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+    echo "remountrw: must be root" >&2
+    exit 1
+fi
+
+if findmnt -no OPTIONS / | tr ',' '\n' | grep -qx 'rw'; then
+    echo "remountrw: / is already rw"
+    exit 0
+fi
+
+mount -o remount,rw /
+echo "remountrw: / is now rw"
+
+# Re-arm the auto-remount-ro timer. We use a transient unit (systemd-run)
+# rather than the static timer because the operator's window is a one-shot
+# event tied to this remountrw call, not a periodic schedule.
+timeout="${REMOUNT_RW_TIMEOUT:-10min}"
+systemctl stop veyage-auto-remount-ro.timer 2>/dev/null || true
+systemd-run --on-active="$timeout" \
+    --unit=veyage-auto-remount-ro-oneshot \
+    --description="VEyage: auto-flip / back to ro after $timeout of unattended rw" \
+    /usr/local/sbin/remountro --auto >/dev/null
+echo "remountrw: auto-remount-ro armed for $timeout (run \`remountro\` when done to cancel)"

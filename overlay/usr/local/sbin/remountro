@@ -1,0 +1,36 @@
+#!/bin/bash
+# remountro — flip the rootfs back to ro after edits. Cancels any pending
+# auto-remount-ro timer that remountrw armed. `--auto` is the variant the
+# transient timer fires; it's slightly noisier in the log so you can tell
+# apart "operator finished" from "auto-revert kicked in".
+
+set -euo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+    echo "remountro: must be root" >&2
+    exit 1
+fi
+
+mode=manual
+[[ "${1:-}" == "--auto" ]] && mode=auto
+
+# Sync first so any in-flight writes hit the disk before remount.
+sync
+
+if findmnt -no OPTIONS / | tr ',' '\n' | grep -qx 'ro'; then
+    echo "remountro: / is already ro"
+else
+    mount -o remount,ro /
+    if [[ "$mode" == "auto" ]]; then
+        logger -t remountro "auto-remount-ro fired — / flipped back to ro after timeout"
+        echo "remountro: auto-remount fired — / is now ro"
+    else
+        echo "remountro: / is now ro"
+    fi
+fi
+
+# Cancel any pending transient auto-remount unit (no-op if it already ran
+# or was never armed).
+systemctl stop veyage-auto-remount-ro-oneshot.timer 2>/dev/null || true
+systemctl reset-failed veyage-auto-remount-ro-oneshot.timer 2>/dev/null || true
+systemctl reset-failed veyage-auto-remount-ro-oneshot.service 2>/dev/null || true

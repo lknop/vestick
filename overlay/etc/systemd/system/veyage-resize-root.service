@@ -1,0 +1,13 @@
+[Unit]
+Description=VEyage first-boot rootfs resize (grow to fill device)
+ConditionFirstBoot=yes
+After=local-fs.target
+Before=multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/veyage-resize-root
+
+[Install]
+WantedBy=multi-user.target
