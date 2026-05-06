@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# VEyage build — minimal Debian Trixie + Proxmox VE on a read-only root.
+# VEyage build (voyage-flavor branch) — Debian Trixie + optional Proxmox VE
+# on a normal ext4 root mounted ro by default. See docs/voyage-flavor.md.
 # Run as root on an amd64 Debian/Ubuntu host. See README.md for env vars.
 
 set -euo pipefail
@@ -14,7 +15,14 @@ PVE_MIRROR="${PVE_MIRROR:-http://download.proxmox.com/debian/pve}"
 PVE_SUITE="${PVE_SUITE:-$SUITE}"
 WORK="${WORK:-$PWD/work}"
 OUT="${OUT:-$PWD/out}"
-CHROOT="$WORK/chroot"
+ROOT_MNT="$WORK/root"
+
+# Disk layout. IMG_MB sets total size; ESP+pmxcfs are fixed, root takes the
+# rest. Operator grows the root partition with growpart on first boot if
+# the image is dd'd to a larger device.
+IMG_MB="${IMG_MB:-4096}"
+ESP_MB="${ESP_MB:-128}"
+PMXCFS_MB="${PMXCFS_MB:-256}"
 
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/packages"
 OVERLAY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overlay"
@@ -22,57 +30,28 @@ OVERLAY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overlay"
 log()  { printf '[VEyage] %s\n' "$*" >&2; }
 fail() { printf '[VEyage] ERROR: %s\n' "$*" >&2; exit 1; }
 
-read_pkg_list() {
-    # Print packages from a list file, skipping blanks and # comments.
-    local f="$1"
-    [[ -f "$f" ]] || fail "Package list missing: $f"
-    grep -vE '^\s*(#|$)' "$f"
-}
+# Track loop devices and partition→loop mapping for the EXIT cleanup.
+declare -a LOOPS=()
+declare -A LOOP_FOR=()
 
-mount_chroot() {
-    # Bind the chroot path to itself so it becomes a real mount point.
-    # Proxmox's kernel postinst calls proxmox-boot-tool, which re-execs
-    # itself under `unshare --mount` and tries to set MS_PRIVATE on /. If
-    # the chroot's / is just a directory subtree (not a mount), that
-    # MS_PRIVATE call fails with EINVAL and the install errors out. This
-    # silently worked on Proxmox-LXC build hosts (looser namespace
-    # defaults) but breaks on a clean Ubuntu VM such as a GitHub Actions
-    # runner. make-rshared so subsequent unshare propagation tweaks work.
-    if ! mountpoint -q "$CHROOT"; then
-        mount --bind "$CHROOT" "$CHROOT"
-        mount --make-rshared "$CHROOT"
+cleanup() {
+    # Recursive lazy umount catches the bind-to-self plus all nested
+    # pseudo-fs and the ESP bind. Then free the loop devices. Best-effort —
+    # called from EXIT so don't fail the build.
+    if [[ -n "${ROOT_MNT:-}" ]] && mountpoint -q "$ROOT_MNT" 2>/dev/null; then
+        umount -Rl "$ROOT_MNT" 2>/dev/null || true
     fi
-    mount -t proc proc "$CHROOT/proc"
-    mount -t sysfs sys "$CHROOT/sys"
-    # rbind so /dev/pts comes along — apt's maintainer scripts allocate ptys.
-    # make-rslave so umount inside the chroot doesn't propagate to the host.
-    mount --rbind /dev "$CHROOT/dev"
-    mount --make-rslave "$CHROOT/dev"
-}
-
-umount_chroot() {
-    # Best-effort; called from EXIT trap so don't fail the build.
-    # -Rl: recursive + lazy so an LXC-passed-through /dev/.lxc/sys (which we
-    # can't unmount cleanly inside the container) doesn't leave stuck mounts
-    # that block rm -rf of the chroot on the next bootstrap_base. One -Rl
-    # on $CHROOT also catches the bind-to-self introduced in mount_chroot.
-    umount -Rl "$CHROOT" 2>/dev/null || true
-}
-
-chroot_run() {
-    chroot "$CHROOT" /usr/bin/env -i \
-        HOME=/root \
-        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-        DEBIAN_FRONTEND=noninteractive \
-        LC_ALL=C \
-        "$@"
+    local lp
+    for lp in "${LOOPS[@]}"; do
+        losetup -d "$lp" 2>/dev/null || true
+    done
 }
 
 check_prereqs() {
     log "Checking prerequisites"
     [[ $EUID -eq 0 ]] || fail "Must run as root"
     [[ "$(uname -m)" == "x86_64" ]] || fail "Build host must be x86_64 (got $(uname -m))"
-    for cmd in debootstrap mksquashfs chroot rsync sgdisk grub-install mkfs.fat mkfs.ext4 losetup wget; do
+    for cmd in debootstrap rsync sgdisk mkfs.fat mkfs.ext4 losetup wget blkid; do
         command -v "$cmd" >/dev/null || fail "Missing command: $cmd"
     done
     case "$LOG_SHIPPER" in
@@ -81,20 +60,87 @@ check_prereqs() {
     esac
 }
 
+create_image() {
+    local img="$OUT/veyage.img"
+    log "Creating ${IMG_MB} MB disk image at $img"
+    rm -f "$img"
+    truncate -s "${IMG_MB}M" "$img"
+    local root_mb=$((IMG_MB - ESP_MB - PMXCFS_MB - 4))
+    [[ $root_mb -gt 0 ]] || fail "IMG_MB=$IMG_MB too small for ESP+pmxcfs+rootfs layout"
+    sgdisk --clear \
+        --new=1:0:+${ESP_MB}M     --typecode=1:ef00 --change-name=1:ESP \
+        --new=2:0:+${root_mb}M    --typecode=2:8300 --change-name=2:rootfs \
+        --new=3:0:0               --typecode=3:8300 --change-name=3:pmxcfs \
+        "$img" >/dev/null
+    printf '%s\n' "$img"
+}
+
+setup_loops() {
+    local img="$1"
+    # Map each partition by explicit offset+size. `losetup -P` partition
+    # scanning isn't reliable in many LXC build envs; explicit offset works
+    # everywhere. (See feedback memory on LXC image-build quirks.)
+    local n first size lp
+    for n in 1 2 3; do
+        first=$(sgdisk -i "$n" "$img" | awk '/First sector/ {print $3}')
+        size=$( sgdisk -i "$n" "$img" | awk '/Partition size/ {print $3}')
+        lp=$(losetup --offset $((first * 512)) --sizelimit $((size * 512)) -f --show "$img")
+        LOOPS+=("$lp")
+        LOOP_FOR[$n]="$lp"
+    done
+    log "Loops: ESP=${LOOP_FOR[1]} root=${LOOP_FOR[2]} pmxcfs=${LOOP_FOR[3]}"
+}
+
+format_partitions() {
+    log "Formatting ESP / rootfs / pmxcfs"
+    mkfs.fat -F32 -n EFI "${LOOP_FOR[1]}" >/dev/null
+    mkfs.ext4 -L rootfs -F -q "${LOOP_FOR[2]}"
+    mkfs.ext4 -L pmxcfs -F -q "${LOOP_FOR[3]}"
+}
+
+mount_root() {
+    rm -rf "$ROOT_MNT"
+    mkdir -p "$ROOT_MNT"
+    mount "${LOOP_FOR[2]}" "$ROOT_MNT"
+}
+
 bootstrap_base() {
-    log "debootstrap --variant=minbase $SUITE -> $CHROOT"
-    if [[ -e "$CHROOT" ]]; then
-        log "Existing chroot at $CHROOT — removing before re-bootstrap"
-        umount_chroot
-        rm -rf "$CHROOT"
-    fi
-    mkdir -p "$CHROOT"
-    debootstrap --variant=minbase --arch="$ARCH" "$SUITE" "$CHROOT" "$MIRROR"
+    log "debootstrap --variant=minbase $SUITE -> $ROOT_MNT"
+    debootstrap --variant=minbase --arch="$ARCH" "$SUITE" "$ROOT_MNT" "$MIRROR"
+}
+
+mount_pseudo() {
+    # Bind the rootfs mount to itself + make-rshared so that nested
+    # `unshare --mount` invocations from package postinst scripts can
+    # manipulate propagation. Proxmox's kernel postinst hits this; without
+    # the bind+rshared it dies with EINVAL on a clean Ubuntu VM (e.g.
+    # GitHub Actions runner). See feedback memory.
+    mount --bind "$ROOT_MNT" "$ROOT_MNT"
+    mount --make-rshared "$ROOT_MNT"
+    mount -t proc proc "$ROOT_MNT/proc"
+    mount -t sysfs sys "$ROOT_MNT/sys"
+    # rbind so /dev/pts comes along — apt's maintainer scripts allocate ptys.
+    # make-rslave so umount inside the chroot doesn't propagate to the host.
+    mount --rbind /dev "$ROOT_MNT/dev"
+    mount --make-rslave "$ROOT_MNT/dev"
+    # Bind the ESP into the chroot so grub-install can write to it and so
+    # the kernel postinst's update-grub sees a real /boot/efi.
+    mkdir -p "$ROOT_MNT/boot/efi"
+    mount "${LOOP_FOR[1]}" "$ROOT_MNT/boot/efi"
+}
+
+chroot_run() {
+    chroot "$ROOT_MNT" /usr/bin/env -i \
+        HOME=/root \
+        PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive \
+        LC_ALL=C \
+        "$@"
 }
 
 configure_apt() {
     log "Writing apt sources (Debian$( [[ $INCLUDE_PROXMOX -eq 1 ]] && echo ' + Proxmox' ))"
-    cat > "$CHROOT/etc/apt/sources.list" <<EOF
+    cat > "$ROOT_MNT/etc/apt/sources.list" <<EOF
 deb $MIRROR $SUITE main contrib non-free-firmware
 deb $MIRROR $SUITE-updates main contrib non-free-firmware
 deb $SECURITY_MIRROR $SUITE-security main contrib non-free-firmware
@@ -105,12 +151,12 @@ EOF
         local pve_key_url="https://enterprise.proxmox.com/debian/proxmox-release-${PVE_SUITE}.gpg"
         local pve_key_path="/etc/apt/keyrings/proxmox-release-${PVE_SUITE}.gpg"
         log "Fetching Proxmox release key: $pve_key_url"
-        mkdir -p "$CHROOT/etc/apt/keyrings"
-        wget -qO "$CHROOT$pve_key_path" "$pve_key_url" \
+        mkdir -p "$ROOT_MNT/etc/apt/keyrings"
+        wget -qO "$ROOT_MNT$pve_key_path" "$pve_key_url" \
             || fail "Failed to fetch Proxmox release key from $pve_key_url"
-        [[ -s "$CHROOT$pve_key_path" ]] \
-            || fail "Proxmox release key is empty: $CHROOT$pve_key_path"
-        cat > "$CHROOT/etc/apt/sources.list.d/pve-no-subscription.sources" <<EOF
+        [[ -s "$ROOT_MNT$pve_key_path" ]] \
+            || fail "Proxmox release key is empty: $ROOT_MNT$pve_key_path"
+        cat > "$ROOT_MNT/etc/apt/sources.list.d/pve-no-subscription.sources" <<EOF
 Types: deb
 URIs: $PVE_MIRROR
 Suites: $PVE_SUITE
@@ -118,7 +164,6 @@ Components: pve-no-subscription
 Signed-By: $pve_key_path
 EOF
     fi
-    mount_chroot
     chroot_run apt-get update
 }
 
@@ -140,8 +185,6 @@ install_packages() {
         done < "$f"
     done
     log "Package count: ${#pkgs[@]}"
-    # --force-confold: keep our pre-written conffiles (e.g. update-initramfs.conf)
-    # rather than failing on the conffile prompt that DEBIAN_FRONTEND alone won't suppress.
     chroot_run apt-get install -y --no-install-recommends \
         -o Dpkg::Options::=--force-confold \
         -o Dpkg::Options::=--force-confdef \
@@ -150,202 +193,109 @@ install_packages() {
 
 apply_overlay() {
     log "Applying rootfs overlay from $OVERLAY_DIR"
-    rsync -a "$OVERLAY_DIR/" "$CHROOT/"
-    # TODO: apply $LOG_SHIPPER-specific overlay (overlay-$LOG_SHIPPER/) if present
+    # --chown=root:root so files don't carry the host user's uid (the build
+    # rsync from a Mac left files owned by uid 501 in earlier builds, and
+    # systemd warns about non-root unit ownership).
+    rsync -a --chown=root:root "$OVERLAY_DIR/" "$ROOT_MNT/"
 }
 
-configure_readonly() {
-    log "Configuring read-only root behavior"
-    # Modules required to mount a squashfs root and stack overlayfs.
-    cat > "$CHROOT/etc/initramfs-tools/modules" <<'EOF'
-squashfs
-overlay
-loop
-ext4
-virtio_blk
-virtio_pci
-virtio_net
+write_fstab() {
+    log "Writing /etc/fstab (root=ro, pmxcfs=rw, tmpfs for ephemeral paths)"
+    local root_uuid esp_uuid pmxcfs_uuid
+    root_uuid=$(blkid -s UUID -o value "${LOOP_FOR[2]}")
+    esp_uuid=$(blkid -s UUID -o value "${LOOP_FOR[1]}")
+    pmxcfs_uuid=$(blkid -s UUID -o value "${LOOP_FOR[3]}")
+    cat > "$ROOT_MNT/etc/fstab" <<EOF
+# / mounted ro by default. Use \`remountrw\` to make changes,
+# \`remountro\` when done. auto-remount-ro.timer flips it back after
+# 10 min of unattended rw to limit power-loss exposure.
+UUID=$root_uuid  /                    ext4  ro,errors=remount-ro,noatime  0  1
+UUID=$esp_uuid    /boot/efi            vfat  defaults,noatime               0  2
+UUID=$pmxcfs_uuid /var/lib/pve-cluster ext4  defaults,noatime,nofail        0  2
+
+# Volatile mounts. Logs go to RAM (journald is Storage=volatile via the
+# overlay drop-in; rsyslog forwards off-box). rrdcached on tmpfs trades
+# lost-on-reboot perf graphs for ~80% less routine flash write rate.
+tmpfs            /tmp                 tmpfs nodev,nosuid,size=512M           0  0
+tmpfs            /var/tmp             tmpfs nodev,nosuid,size=128M           0  0
+tmpfs            /var/log             tmpfs nodev,nosuid,size=128M           0  0
+tmpfs            /var/lib/rrdcached   tmpfs nodev,nosuid,size=128M,mode=755  0  0
 EOF
-    # Patch overlayroot's init-bottom hook: drop the `mount -o remount,ro $ROOTMNT`
-    # call that fires whenever the kernel cmdline contains `ro`. Squashfs requires
-    # `ro` at the kernel mount step, but the overlay we stack on top must stay rw
-    # — otherwise systemd's StateDirectory= / LogsDirectory= mkdirs all fail
-    # (chrony, systemd-logind, sshd-keygen all break).
-    local hook="$CHROOT/usr/share/initramfs-tools/scripts/init-bottom/overlayroot"
-    if [[ -f "$hook" ]] && grep -q 'remount,ro "$ROOTMNT"' "$hook"; then
-        sed -i 's|^\(\s*\)mount -o remount,ro "\$ROOTMNT"|\1: # VEyage: skip remount,ro — keep overlay rw\n\1true|' "$hook"
-    fi
-    # Pre-generate SSH host keys at build time. sshd-keygen.service has
-    # ConditionFirstBoot=yes which doesn't fire reliably here, so we ship keys
-    # in the squashfs. NOTE: every image built from the same source has the
-    # same keys — Phase 3 follow-up should regenerate onto the RW state
-    # partition on first deploy.
-    if [[ -d "$CHROOT/etc/ssh" ]] && ! ls "$CHROOT/etc/ssh/"ssh_host_*_key >/dev/null 2>&1; then
+    # Pre-create the mount points so systemd doesn't have to.
+    mkdir -p "$ROOT_MNT/boot/efi" \
+             "$ROOT_MNT/var/lib/pve-cluster" \
+             "$ROOT_MNT/var/lib/rrdcached" \
+             "$ROOT_MNT/var/tmp"
+}
+
+install_grub() {
+    log "Installing GRUB (x86_64-efi, --removable for no-NVRAM-entry boot)"
+    # Standard Debian-managed bootloader: apt can update grub-efi-amd64
+    # during a remountrw window, no custom mkstandalone trickery. --removable
+    # plants BOOTX64.EFI so any UEFI firmware boots it without touching NVRAM
+    # (essential for "dd to a USB stick on machine A, boot on machine B").
+    chroot_run grub-install \
+        --target=x86_64-efi \
+        --efi-directory=/boot/efi \
+        --bootloader-id=VEyage \
+        --removable \
+        --no-nvram \
+        --recheck
+    # Console: ttyS0 first, tty0 last so /dev/console = tty0 — best for
+    # bare-metal-with-monitor users; serial users still see kernel printk
+    # because both consoles are listed.
+    cat > "$ROOT_MNT/etc/default/grub" <<'EOF'
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=2
+GRUB_DISTRIBUTOR=VEyage
+GRUB_CMDLINE_LINUX_DEFAULT="console=ttyS0 console=tty0 panic=10"
+GRUB_CMDLINE_LINUX=""
+GRUB_TERMINAL=console
+EOF
+    chroot_run update-grub
+}
+
+prepare_first_boot() {
+    log "Preparing for first boot (machine-id reset, ssh host keys)"
+    # Empty machine-id triggers ConditionFirstBoot=yes for systemd-firstboot
+    # on the first boot of each dd'd USB stick — gives unique IDs per device.
+    : > "$ROOT_MNT/etc/machine-id"
+    # Pre-generate SSH host keys so sshd starts on first boot. Operators who
+    # care can regenerate them after first boot:
+    #   remountrw && rm /etc/ssh/ssh_host_* && ssh-keygen -A && remountro
+    if [[ -d "$ROOT_MNT/etc/ssh" ]] && ! ls "$ROOT_MNT/etc/ssh/"ssh_host_*_key >/dev/null 2>&1; then
         chroot_run ssh-keygen -A
     fi
 }
 
-generate_initramfs() {
-    if ! ls "$CHROOT/boot/"vmlinuz-* >/dev/null 2>&1; then
-        log "No kernel installed, skipping initramfs"
-        return
-    fi
-    # Kernel-postinst already created the initramfs during install_packages;
-    # re-run to pick up overlay/ files (e.g. /etc/initramfs-tools/modules,
-    # /etc/overlayroot.conf) applied after install.
-    log "Updating initramfs to include overlay/ changes"
-    chroot_run update-initramfs -u -k all
-}
-
-export_boot_artifacts() {
-    # Pick the highest-versioned /boot/vmlinuz-*. Debian's linux-image-amd64
-    # creates a /vmlinuz root symlink, but Proxmox's kernel doesn't — globbing
-    # /boot handles both.
-    local kern initrd suffix
-    kern=$(ls -1 "$CHROOT"/boot/vmlinuz-* 2>/dev/null | sort -V | tail -1)
-    if [[ -z "$kern" ]]; then
-        log "No /boot/vmlinuz-* in chroot, skipping boot-artifact export"
-        return
-    fi
-    suffix="${kern##*/vmlinuz-}"
-    initrd="$CHROOT/boot/initrd.img-$suffix"
-    [[ -f "$initrd" ]] || fail "Kernel $kern present but matching initrd $initrd missing"
-    log "Exporting kernel + initrd to $OUT/ (kernel: $suffix)"
-    cp -L "$kern"   "$OUT/vmlinuz"
-    cp -L "$initrd" "$OUT/initrd.img"
-}
-
-cleanup_chroot() {
-    log "Cleaning chroot before pack"
+cleanup_image() {
+    log "Cleaning apt cache + tmp dirs"
     chroot_run apt-get clean
-    rm -rf "$CHROOT/var/lib/apt/lists/"*
-    rm -rf "$CHROOT/var/cache/"* "$CHROOT/tmp/"* "$CHROOT/var/tmp/"*
-    : > "$CHROOT/etc/machine-id"          # regenerated on first boot
-    # Note: SSH host keys are NOT removed here — sshd-keygen.service has
-    # ConditionFirstBoot=yes that doesn't trigger reliably under our overlay
-    # setup. Keys ship pre-generated (see configure_readonly). Replace them
-    # at first deploy if you care about per-host uniqueness.
-    umount_chroot
-}
-
-pack_squashfs() {
-    log "Packing squashfs to $OUT/rootfs.squashfs"
-    rm -f "$OUT/rootfs.squashfs"
-    # Exclude POSIX ACL xattrs (squashfs can't represent them, warns noisily)
-    # while preserving security.capability so setcap'd binaries (e.g. ping) keep working.
-    mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -noappend -no-progress \
-        -xattrs-exclude '^system\.posix_acl_'
-    ls -lh "$OUT/rootfs.squashfs"
-}
-
-build_image() {
-    local img="$OUT/veyage.img"
-    local squashfs="$OUT/rootfs.squashfs"
-    [[ -f "$squashfs" ]] || fail "Missing squashfs at $squashfs"
-    [[ -f "$OUT/vmlinuz" && -f "$OUT/initrd.img" ]] || fail "Missing kernel/initrd in $OUT"
-
-    # state_mb is just the image's initial size. veyage-state-init grows it
-    # to fill the actual device on first boot via growpart+resize2fs, so we
-    # ship a small image and let it expand on whatever USB/SD it's dd'd to.
-    local squash_size_mb esp_mb=128 state_mb=256 total_mb
-    squash_size_mb=$(( ( $(stat -c%s "$squashfs") + 1024*1024 - 1 ) / (1024*1024) ))
-    total_mb=$(( esp_mb + squash_size_mb + state_mb + 4 ))
-    log "Assembling bootable disk image: ESP ${esp_mb}M + rootfs ${squash_size_mb}M + state ${state_mb}M = ${total_mb}M"
-
-    rm -f "$img"
-    truncate -s "${total_mb}M" "$img"
-
-    # GPT layout for UEFI boot:
-    #   p1 ESP   (FAT32, EFI/BOOT/BOOTX64.EFI)
-    #   p2 rootfs (raw squashfs partition)
-    #   p3 state  (ext4, persistent state)
-    sgdisk --clear \
-        --new=1:0:+${esp_mb}M --typecode=1:ef00 --change-name=1:ESP \
-        --new=2:0:+${squash_size_mb}M --typecode=2:8300 --change-name=2:rootfs \
-        --new=3:0:0           --typecode=3:8300 --change-name=3:state \
-        "$img" >/dev/null
-
-    local rootfs_partuuid
-    rootfs_partuuid=$(sgdisk -i 2 "$img" | awk -F': ' '/Partition unique GUID/ {print tolower($2)}')
-
-    # Map each partition to its own loop device by explicit offset+size, since
-    # `losetup -P` partition-scanning doesn't populate /dev/loopNpM in many
-    # LXC configurations and device-mapper (kpartx) is also typically blocked.
-    _part_loop() {
-        local n="$1" first size
-        first=$(sgdisk -i "$n" "$img" | awk '/First sector/ {print $3}')
-        size=$( sgdisk -i "$n" "$img" | awk '/Partition size/ {print $3}')
-        losetup --offset $((first * 512)) --sizelimit $((size * 512)) -f --show "$img"
-    }
-    local lp_esp lp_root lp_state
-    lp_esp=$(_part_loop 1)
-    lp_root=$(_part_loop 2)
-    lp_state=$(_part_loop 3)
-    log "Partition loops: ESP=$lp_esp rootfs=$lp_root state=$lp_state"
-
-    mkfs.fat -F32 -n EFI "$lp_esp" >/dev/null
-    dd if="$squashfs" of="$lp_root" bs=4M conv=notrunc status=none
-    mkfs.ext4 -L state -F "$lp_state" >/dev/null
-
-    local mnt; mnt=$(mktemp -d)
-    mount "$lp_esp" "$mnt"
-    mkdir -p "$mnt/boot" "$mnt/EFI/BOOT"
-    cp "$OUT/vmlinuz"   "$mnt/boot/vmlinuz"
-    cp "$OUT/initrd.img" "$mnt/boot/initrd.img"
-
-    # Build a self-contained EFI binary with grub-mkstandalone. Unlike
-    # `grub-install --removable` (which just plants a thin BOOTX64.EFI that
-    # tries to load modules off the ESP at runtime), mkstandalone bakes
-    # GRUB + all required modules + our grub.cfg into one file, so UEFI
-    # firmware can boot it with no other dependencies on the partition.
-    local tmp_cfg
-    tmp_cfg=$(mktemp)
-    cat > "$tmp_cfg" <<EOF
-set timeout=2
-set default=0
-
-# grub-mkstandalone bakes this config into a memdisk, so GRUB's root starts
-# pointed at the embedded fs. Switch to the ESP (FAT label "EFI") to find
-# /boot/vmlinuz and /boot/initrd.img before loading them.
-search --no-floppy --label EFI --set=root
-
-menuentry 'VEyage' {
-    linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro console=ttyS0 console=tty0 panic=10
-    initrd /boot/initrd.img
-}
-EOF
-
-    log "Building standalone GRUB EFI binary"
-    grub-mkstandalone \
-        --format=x86_64-efi \
-        --output="$mnt/EFI/BOOT/BOOTX64.EFI" \
-        --modules='part_gpt fat ext2 normal linux configfile echo search search_fs_uuid search_label test reboot halt all_video gfxterm gfxterm_background loadenv' \
-        --locales='' --themes='' --fonts='' \
-        "boot/grub/grub.cfg=$tmp_cfg" >/dev/null
-    rm -f "$tmp_cfg"
-
-    umount "$mnt"
-    rmdir "$mnt"
-    losetup -d "$lp_esp" "$lp_root" "$lp_state"
-
-    log "Bootable image: $img ($(ls -lh "$img" | awk '{print $5}'))"
+    rm -rf "$ROOT_MNT/var/lib/apt/lists/"*
+    rm -rf "$ROOT_MNT/var/cache/"* "$ROOT_MNT/tmp/"* "$ROOT_MNT/var/tmp/"*
 }
 
 main() {
     check_prereqs
     mkdir -p "$WORK" "$OUT"
-    trap umount_chroot EXIT
+    trap cleanup EXIT
+
+    local img
+    img=$(create_image)
+    setup_loops "$img"
+    format_partitions
+    mount_root
     bootstrap_base
+    mount_pseudo
     configure_apt
     install_packages
     apply_overlay
-    configure_readonly
-    generate_initramfs
-    export_boot_artifacts
-    cleanup_chroot
-    pack_squashfs
-    build_image
-    log "Done. Output in $OUT/"
+    write_fstab
+    install_grub
+    prepare_first_boot
+    cleanup_image
+
+    log "Done. Output: $img ($(ls -lh "$img" | awk '{print $5}'))"
     log "To boot in QEMU:  ./test-vm.sh"
 }
 

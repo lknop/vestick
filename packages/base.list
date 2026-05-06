@@ -7,24 +7,17 @@
 systemd-sysv
 dbus
 
-# Read-only root: overlayroot adds initramfs hooks that mount a tmpfs upper
-# layer over the (RO) root, so PID 1 sees a fully writable /. Configured via
-# overlay/etc/overlayroot.conf. e2fsprogs is needed because overlayroot's
-# initramfs hook unconditionally bundles mke2fs (it's a Recommends, not a
-# Depends, so --no-install-recommends would otherwise skip it). busybox gives
-# the initramfs a real `grep` (and friends) — without it, mkinitramfs falls
-# back to klibc-utils, and overlayroot's init-bottom script silently fails
-# its overlay-availability check.
-overlayroot
+# Filesystem + boot-time resize tooling. e2fsprogs gives us mkfs.ext4,
+# fsck, and resize2fs (the latter for first-boot growpart of the rootfs).
+# growpart from cloud-guest-utils + sgdisk from gdisk handle GPT growth.
 e2fsprogs
-busybox
-
-# growpart for first-boot resize of the state partition. Lets us ship a
-# small image and have it expand to fill the real device on first boot.
-# gdisk provides sgdisk, which growpart calls for GPT disks (it's a
-# Recommends of cloud-guest-utils so --no-install-recommends drops it).
 cloud-guest-utils
 gdisk
+
+# Bootloader. Standard Debian-managed grub-efi so apt can update it during
+# a remountrw window. --removable plant happens at build time via
+# build.sh::install_grub.
+grub-efi-amd64
 
 # Trust roots and apt prerequisites
 ca-certificates
