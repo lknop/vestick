@@ -92,3 +92,13 @@ for p in "${PERSIST_PATHS[@]}"; do
     mount --bind "$src" "$dest"
     echo "veyage-state: bound $src → $dest"
 done
+
+# systemd reads /etc/hostname at PID 1 init — before this service runs —
+# and sets the kernel hostname from the squashfs's value (the build-time
+# default). After our bind, /etc/hostname reflects what veyage-firstboot
+# wrote, but the kernel hostname is stale. Re-apply it from the now-bound
+# file so getty banners and `hostname` command see the persisted value.
+if [[ -f /etc/hostname ]]; then
+    hn=$(cat /etc/hostname)
+    [[ -n "$hn" ]] && hostname "$hn"
+fi
