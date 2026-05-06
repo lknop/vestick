@@ -1,0 +1,25 @@
+[Unit]
+Description=VEyage first-boot network setup (interactive vmbr0 picker)
+After=veyage-firstboot.service local-fs.target
+Before=networking.service getty.target
+RequiresMountsFor=/etc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+TTYVHangup=yes
+TimeoutStartSec=infinity
+# Briefly flip / rw, run the interactive picker (which writes
+# /etc/network/interfaces only if vmbr0 isn't already there), flip back.
+ExecStartPre=/bin/mount -o remount,rw /
+ExecStart=/usr/local/sbin/veyage-network-init
+ExecStartPost=/bin/sync
+ExecStartPost=/bin/mount -o remount,ro /
+
+[Install]
+WantedBy=networking.service
