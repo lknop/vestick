@@ -118,7 +118,90 @@ normal Linux semantics and minimal write activity, this is.
 - **`/etc/fstab` `errors=` policy on /**: `errors=remount-ro` is appropriate
   for the ro design. Or `errors=panic` to force a reboot?
 - **Image size default**: ext4 root needs more space than the squashfs did
-  (no compression). Probably 2 GB without Proxmox, 4 GB with. Default to 4 GB
-  and let users `resize2fs` after dd to a bigger device.
+  (no compression). Empirically 4 GB ran out of room mid-dpkg for the PVE
+  build — bumped default to 8 GB. Operator grows on dd via growpart.
 - **First-boot resize**: same growpart pattern still applies — grow the root
   partition to fill the device after dd to a larger USB.
+
+## What we measured (trace experiment, 2026-05-06)
+
+Built `INCLUDE_PROXMOX=1` with rw root + a baked-in trace script. Boot,
+let PVE settle, mark a baseline, idle 60s, then `find -newer baseline`.
+Headline: outside of `/var/lib/pve-cluster`, a steady-state PVE node
+writes essentially nothing to /var. Detail:
+
+| Path | Files modified in 60s | Real disk I/O? |
+|---|---|---|
+| `/var/lib/pve-cluster/config.db-{shm,wal}` | 2 | yes — already on its own partition |
+| `/var/lib/pve-manager/pve-replication-state.json` | 1 | yes — tiny, infrequent |
+| `/etc/pve/nodes/<n>/lrm_status` | 1 | no — `/etc/pve` is FUSE-backed by pmxcfs (so this is the same write as config.db) |
+| `/var/lib/lxcfs/proc/*`, `/sys/*` | 207 | **no** — FUSE virtual files; mtime ticks but no disk I/O |
+| `/var/log/*` | 16 | route to tmpfs (planned) |
+| `/var/cache/*` | 108 | mostly stale apt cache from build, not runtime writes |
+| `/var/lib/rrdcached/*` | 0 | tmpfs (planned) |
+| `/var/tmp/*` | 0 | tmpfs (planned) |
+
+This validates the layout above. The "all of /var on a separate
+partition" rabbit hole I went down in the middle of the branch was
+over-engineering — pmxcfs is genuinely the only chatty writer.
+
+Caveats: idle PVE (no network → no cluster gossip; no VMs → no RRD
+updates; no web-UI access → no pveproxy logs). Real-world load will
+exercise more paths but the rate stays modest given log + rrdcached are
+tmpfs.
+
+## What's pending (next session)
+
+Status as of last commit on this branch (`c548475`, "first-boot
+wizards"): build runs to completion, image boots far enough to enter
+firstboot. Two showstoppers blocking a clean boot, with the trace data
+giving us the right way to fix them:
+
+1. **`systemd-logind` crashloops** — `Failed at step STATE_DIRECTORY:
+   Read-only file system`. logind wants to create
+   `/var/lib/systemd/linger`. Solution informed by the trace: one tmpfs
+   mount over `/var/lib/systemd` (small, ephemeral state — losing it on
+   reboot is fine). Add to fstab.
+
+2. **`veyage-firstboot.service` doesn't fire** — `WantedBy=
+   multi-user.target` symlink doesn't activate it. Probable cause:
+   logind's failure cascading through PAM ordering. Fixing #1 should
+   unblock this. Verify by re-running the expect test after the logind
+   fix.
+
+After those, the per-path tmpfs picks for the small handful of `/var/lib/
+<service>/` paths systemd insists on writing — nothing else. Drive
+each pick with another trace run if needed.
+
+### Caveat on what the trace did and didn't prove
+
+The trace was run on a hand-patched **rw-root** image (so logind would
+actually start and Proxmox could come up). It told us *which files*
+get touched at runtime — that's a good map of the runtime write rate.
+
+It did **not** prove that the ro-root design will boot. We already
+know `systemd-logind` will crashloop at `STATE_DIRECTORY` on a ro root
+because it tries to create `/var/lib/systemd/linger`. Other systemd
+services may have similar `StateDirectory=` / `CacheDirectory=`
+directives — we haven't enumerated them yet.
+
+Concrete next-session checklist for the ro-root boot:
+
+1. In the chroot of a fresh build, audit:
+   ```
+   grep -lE '^(State|Cache|Logs)Directory=' /usr/lib/systemd/system/*.service
+   ```
+   For each hit, decide: tmpfs (ephemeral state, OK to lose), or
+   bind-from-elsewhere-persistent (has to survive reboots).
+2. Add corresponding tmpfs lines to the fstab written by `build.sh`:
+   ```
+   tmpfs  /var/lib/systemd  tmpfs  nodev,nosuid,size=64M  0  0
+   ```
+   (one line per service that doesn't need persistence).
+3. Boot a ro-root build. If logind starts cleanly, retry the trace
+   experiment — it'll give us much more accurate data about the
+   normal (ro-root) boot's write pattern.
+4. Iterate on tmpfs picks until clean boot.
+
+The whole effort is bounded — it's a small number of services and
+each fix is one fstab line. Just need to grind through them.

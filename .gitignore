@@ -14,3 +14,6 @@
 
 # Claude Code local state
 .claude/
+
+# Per-developer / per-session notes (not for the repo)
+HANDOFF.md
