@@ -20,7 +20,13 @@ ROOT_MNT="$WORK/root"
 # Disk layout. IMG_MB sets total size; ESP+pmxcfs are fixed, root takes the
 # rest. Operator grows the root partition with growpart on first boot if
 # the image is dd'd to a larger device.
-IMG_MB="${IMG_MB:-4096}"
+#
+# 8 GB default: a full INCLUDE_PROXMOX=1 install (kernel + pve-manager + ceph
+# bits + grub modules + initrd) needs ~3.5 GB on disk, plus headroom for one
+# round of `apt upgrade` during a remountrw window. The Debian-only build is
+# much smaller but a 4 GB image saved is uninteresting; one default keeps the
+# UX simple.
+IMG_MB="${IMG_MB:-8192}"
 ESP_MB="${ESP_MB:-128}"
 PMXCFS_MB="${PMXCFS_MB:-256}"
 
