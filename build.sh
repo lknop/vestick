@@ -30,6 +30,18 @@ read_pkg_list() {
 }
 
 mount_chroot() {
+    # Bind the chroot path to itself so it becomes a real mount point.
+    # Proxmox's kernel postinst calls proxmox-boot-tool, which re-execs
+    # itself under `unshare --mount` and tries to set MS_PRIVATE on /. If
+    # the chroot's / is just a directory subtree (not a mount), that
+    # MS_PRIVATE call fails with EINVAL and the install errors out. This
+    # silently worked on Proxmox-LXC build hosts (looser namespace
+    # defaults) but breaks on a clean Ubuntu VM such as a GitHub Actions
+    # runner. make-rshared so subsequent unshare propagation tweaks work.
+    if ! mountpoint -q "$CHROOT"; then
+        mount --bind "$CHROOT" "$CHROOT"
+        mount --make-rshared "$CHROOT"
+    fi
     mount -t proc proc "$CHROOT/proc"
     mount -t sysfs sys "$CHROOT/sys"
     # rbind so /dev/pts comes along — apt's maintainer scripts allocate ptys.
@@ -42,8 +54,9 @@ umount_chroot() {
     # Best-effort; called from EXIT trap so don't fail the build.
     # -Rl: recursive + lazy so an LXC-passed-through /dev/.lxc/sys (which we
     # can't unmount cleanly inside the container) doesn't leave stuck mounts
-    # that block rm -rf of the chroot on the next bootstrap_base.
-    umount -Rl "$CHROOT/dev" "$CHROOT/sys" "$CHROOT/proc" 2>/dev/null || true
+    # that block rm -rf of the chroot on the next bootstrap_base. One -Rl
+    # on $CHROOT also catches the bind-to-self introduced in mount_chroot.
+    umount -Rl "$CHROOT" 2>/dev/null || true
 }
 
 chroot_run() {
