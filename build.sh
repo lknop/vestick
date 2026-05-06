@@ -230,12 +230,24 @@ tmpfs            /var/tmp             tmpfs nodev,nosuid,size=128M           0  
 tmpfs            /var/log             tmpfs nodev,nosuid,size=128M           0  0
 tmpfs            /var/lib/rrdcached   tmpfs nodev,nosuid,size=128M,mode=755  0  0
 tmpfs            /var/lib/systemd     tmpfs nodev,nosuid,size=64M            0  0
+# /var/cache treated as fully regenerable per FHS — apparmor recompiles
+# its policy cache (~seconds), apt cache is irrelevant on a ro-root host.
+tmpfs            /var/cache           tmpfs nodev,nosuid,size=128M,mode=755  0  0
+# postfix's chroot (queue_directory) and data dir (data_directory) both
+# need to be writable on every start: postfix-script (re)creates queue
+# dirs and master writes its lock file. Ownership for /var/lib/postfix is
+# fixed by overlay/etc/tmpfiles.d/veyage-postfix.conf after mount.
+tmpfs            /var/spool/postfix   tmpfs nodev,nosuid,size=64M,mode=755   0  0
+tmpfs            /var/lib/postfix     tmpfs nodev,nosuid,size=16M,mode=755   0  0
 EOF
     # Pre-create the mount points so systemd doesn't have to.
     mkdir -p "$ROOT_MNT/boot/efi" \
              "$ROOT_MNT/var/lib/pve-cluster" \
              "$ROOT_MNT/var/lib/rrdcached" \
-             "$ROOT_MNT/var/tmp"
+             "$ROOT_MNT/var/tmp" \
+             "$ROOT_MNT/var/cache" \
+             "$ROOT_MNT/var/spool/postfix" \
+             "$ROOT_MNT/var/lib/postfix"
 }
 
 install_grub() {
@@ -336,6 +348,37 @@ cleanup_image() {
     chroot_run apt-get clean
     rm -rf "$ROOT_MNT/var/lib/apt/lists/"*
     rm -rf "$ROOT_MNT/var/cache/"* "$ROOT_MNT/tmp/"* "$ROOT_MNT/var/tmp/"*
+
+    log "Masking services that fight ro-root (grub-common, pvenetcommit)"
+    # grub-common writes /boot/grub/grubenv "recordfail" each boot; we don't
+    # use the menu-failure-counter feature, panic=10 covers boot failure.
+    chroot_run systemctl mask grub-common.service
+    # pvenetcommit moves /etc/network/interfaces.new -> interfaces; on ro
+    # root any rename in /etc fails. Network changes happen via remountrw
+    # in this design, so this committer has no useful job here.
+    chroot_run systemctl mask pvenetcommit.service 2>/dev/null || true
+
+    log "Removing build-time leftovers that block ro-root boot"
+    # ifupdown's atomic-rename file from initial network config write
+    rm -f "$ROOT_MNT/etc/network/interfaces.new"
+    # update-alternatives' atomic-temp files (left over from an interrupted
+    # alternatives run during a maintainer script — these provoke
+    # update-alternatives to retry the cleanup at every boot)
+    rm -f "$ROOT_MNT/etc/alternatives/"*.dpkg-tmp
+
+    # pve-firewall's ExecStartPre invokes `update-alternatives --set` on every
+    # boot, which writes /etc/alternatives/*.dpkg-tmp even when the target is
+    # already correct (--set always rewrites). Pre-set them here so the
+    # default state matches what pve-firewall wants, and a drop-in in the
+    # overlay clears the ExecStartPre list so the runtime --set never runs.
+    if [[ -x "$ROOT_MNT/usr/sbin/iptables-legacy" ]]; then
+        log "Pre-setting iptables/ebtables/ip6tables alternatives to legacy"
+        chroot_run update-alternatives --set ebtables /usr/sbin/ebtables-legacy
+        chroot_run update-alternatives --set iptables /usr/sbin/iptables-legacy
+        chroot_run update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy
+        # Re-clean dpkg-tmp produced by the --set above.
+        rm -f "$ROOT_MNT/etc/alternatives/"*.dpkg-tmp
+    fi
 }
 
 main() {
