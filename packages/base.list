@@ -46,6 +46,8 @@ iputils-ping
 # Remote access
 openssh-server
 
-# Minimal pager and editor (no full vim, no man-db)
+# Minimal pager and editors (no full vim, no man-db). nano alongside
+# vim-tiny because operators on Proxmox systems commonly default to it.
 less
 vim-tiny
+nano
