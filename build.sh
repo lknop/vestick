@@ -245,6 +245,16 @@ tmpfs            /var/cache           tmpfs nodev,nosuid,size=128M,mode=755  0  
 # fixed by overlay/etc/tmpfiles.d/veyage-postfix.conf after mount.
 tmpfs            /var/spool/postfix   tmpfs nodev,nosuid,size=64M,mode=755   0  0
 tmpfs            /var/lib/postfix     tmpfs nodev,nosuid,size=16M,mode=755   0  0
+# pve-manager runtime state (replication lock, appliance-list cache,
+# task index). Re-derivable from /etc/pve at next boot or refreshed by
+# the operator with \`pveam update\`.
+tmpfs            /var/lib/pve-manager tmpfs nodev,nosuid,size=32M,mode=755   0  0
+# Default Proxmox 'local' storage path. Empty placeholder dirs only —
+# operators who actually use local storage are expected to mount real
+# storage at this path (or reconfigure /etc/pve/storage.cfg). pvestatd
+# pokes at /var/lib/vz/dump on every status tick; tmpfs lets the mkdir
+# succeed instead of EROFS-spamming the journal.
+tmpfs            /var/lib/vz          tmpfs nodev,nosuid,size=32M,mode=755   0  0
 EOF
     # Pre-create the mount points so systemd doesn't have to.
     mkdir -p "$ROOT_MNT/boot/efi" \
@@ -253,7 +263,9 @@ EOF
              "$ROOT_MNT/var/tmp" \
              "$ROOT_MNT/var/cache" \
              "$ROOT_MNT/var/spool/postfix" \
-             "$ROOT_MNT/var/lib/postfix"
+             "$ROOT_MNT/var/lib/postfix" \
+             "$ROOT_MNT/var/lib/pve-manager" \
+             "$ROOT_MNT/var/lib/vz"
 }
 
 install_grub() {
