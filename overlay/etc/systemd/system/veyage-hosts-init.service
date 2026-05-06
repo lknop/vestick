@@ -1,0 +1,14 @@
+[Unit]
+Description=VEyage tmpfs-backed /etc/hosts (maps hostname to primary IP)
+Documentation=file:///usr/local/sbin/veyage-hosts-init
+After=network-online.target networking.service
+Wants=network-online.target
+Before=pve-cluster.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/veyage-hosts-init
+
+[Install]
+WantedBy=multi-user.target

@@ -36,6 +36,7 @@ case "$MODE" in
             -drive "if=pflash,format=raw,readonly=on,file=$OVMF_CODE" \
             -drive "if=pflash,format=raw,file=$VARS_RW" \
             -drive "file=$IMG,format=raw,if=virtio" \
+            -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
             -nographic -no-reboot -serial mon:stdio
         ;;
     direct)
