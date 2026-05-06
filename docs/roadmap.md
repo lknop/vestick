@@ -8,8 +8,8 @@ Phase-by-phase plan with current status. Update **after** each milestone is comm
 - Phase 2 (kernel + initramfs + read-only root via overlayroot): ✅ done
 - Phase 3 (UEFI bootable disk image): ✅ done
 - Phase 4 (state-partition wiring + auto-resize): ✅ done
-- Phase 5 (Proxmox VE layer): 🟡 next
-- Phase 6 (USB-stick deploy + real hardware test): not started
+- Phase 5 (Proxmox VE layer): ✅ done (apt repo, kernel-export glob, state binds, vmbr0 wizard, hostname/root-pw wizard; QEMU acceptance tests pass for both first and second boot)
+- Phase 6 (USB-stick deploy + real hardware test): 🟡 next
 - Phase 7 (size reduction): not started
 - Phase 8 (CI / GitHub Actions reproducible build): not started
 
