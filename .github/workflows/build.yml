@@ -43,7 +43,12 @@ jobs:
       - name: Build image
         env:
           INCLUDE_PROXMOX: ${{ matrix.proxmox }}
-        run: sudo -E ./build.sh
+        run: |
+          sudo -E ./build.sh
+          # Build runs under sudo so out/ is root-owned; subsequent steps
+          # (mv/sha256sum/upload-artifact) run as the runner user. Hand
+          # ownership back so they don't need sudo.
+          sudo chown -R "$(id -u):$(id -g)" out/
 
       - name: Stage artifacts
         run: |
