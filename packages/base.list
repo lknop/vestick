@@ -7,19 +7,23 @@
 systemd-sysv
 dbus
 
-# Read-only root: overlayroot adds initramfs hooks that mount a tmpfs upper
-# layer over the (RO) root, so PID 1 sees a fully writable /. Configured via
-# overlay/etc/overlayroot.conf. e2fsprogs is needed because overlayroot's
-# initramfs hook unconditionally bundles mke2fs (it's a Recommends, not a
-# Depends, so --no-install-recommends would otherwise skip it). busybox gives
-# the initramfs a real `grep` (and friends) — without it, mkinitramfs falls
-# back to klibc-utils, and overlayroot's init-bottom script silently fails
-# its overlay-availability check.
+# Read-only root: overlayroot adds initramfs hooks that mount a persistent
+# f2fs upper layer over the squashfs root, so PID 1 sees a fully writable /.
+# Configured via overlay/etc/overlayroot.conf. e2fsprogs is needed because
+# overlayroot's initramfs hook unconditionally bundles mke2fs (it's a
+# Recommends, not a Depends, so --no-install-recommends would otherwise skip
+# it). f2fs-tools provides mkfs.f2fs/fsck.f2fs/resize.f2fs — initramfs hook
+# (overlay/etc/initramfs-tools/hooks/veyage-f2fs) copies them into initramfs
+# for the first-boot mkfs; resize.f2fs runs at runtime via veyage-overlay-resize.
+# busybox gives the initramfs a real `grep` (and friends) — without it,
+# mkinitramfs falls back to klibc-utils, and overlayroot's init-bottom
+# script silently fails its overlay-availability check.
 overlayroot
 e2fsprogs
+f2fs-tools
 busybox
 
-# growpart for first-boot resize of the state partition. Lets us ship a
+# growpart for first-boot resize of the overlay partition. Lets us ship a
 # small image and have it expand to fill the real device on first boot.
 # gdisk provides sgdisk, which growpart calls for GPT disks (it's a
 # Recommends of cloud-guest-utils so --no-install-recommends drops it).

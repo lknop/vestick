@@ -32,12 +32,14 @@ If you're upgrading overlayroot and the patch's sed match changes, you'll need t
 
 ## SSH host keys
 
-`sshd-keygen.service` has `ConditionFirstBoot=yes` *and* `ConditionPathIsReadWrite=/etc/ssh`. With our overlay, `/etc/machine-id` and the dbus machine-id state become inconsistent in a way that causes `ConditionFirstBoot` to misfire. We don't try to fix that — instead:
+Stock Debian's `openssh-server` postinst runs `ssh-keygen -A` at install time. In our build that lands in the chroot, so the keys would get baked into the squashfs and every dd'd device would ship identical keys (security problem).
 
-- **Build-time:** `configure_readonly` runs `ssh-keygen -A` in the chroot so keys are present in the squashfs. Image boots with sshd functional but with shared keys across all images built from the same source.
-- **First-boot:** `veyage-state-init` regenerates fresh per-host keys onto the state partition, then bind-mounts `/etc/ssh` from there. Subsequent boots use the persistent fresh keys.
+The fix:
 
-Don't `rm /etc/ssh/ssh_host_*` in `cleanup_chroot` — without those build-time keys, sshd fails on its first boot before `veyage-state.service` has run.
+- **Build-time:** `configure_readonly` deletes `/etc/ssh/ssh_host_*` from the chroot. The squashfs ships with no keys.
+- **Runtime:** `overlay/etc/systemd/system/ssh.service.d/veyage-keygen.conf` adds `ExecStartPre=/usr/bin/ssh-keygen -A` to `ssh.service`. `ssh-keygen -A` is idempotent — it only creates the keys that don't exist — so it runs once on first boot, and is a no-op on every subsequent start. `/etc/ssh` is on the persistent overlay, so the keys persist.
+
+Don't be tempted to delete keys without the drop-in: stock Debian has no auto-regen-if-missing logic, and `ssh.service` would just fail to start.
 
 ## LXC build environment quirks
 

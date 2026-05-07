@@ -1,0 +1,42 @@
+#!/bin/bash
+# First-boot resize of the f2fs overlay partition. Idempotent — growpart
+# returns non-zero when there's nothing to grow, resize.f2fs on an
+# already-full FS is a no-op. Marker file in the overlay itself prevents
+# rerunning unnecessarily.
+
+set -euo pipefail
+
+MARKER=/var/lib/veyage/.overlay-resized
+mkdir -p "$(dirname "$MARKER")"
+
+[[ -e "$MARKER" ]] && exit 0
+
+dev=$(blkid -L overlay 2>/dev/null || true)
+if [[ -z "$dev" ]]; then
+    echo "veyage-overlay-resize: no partition labeled 'overlay', skipping" >&2
+    touch "$MARKER"
+    exit 0
+fi
+
+parent_disk=$(lsblk -nro PKNAME "$dev" | head -1)
+part_num=$(echo "$dev" | grep -oE '[0-9]+$')
+
+if [[ -n "$parent_disk" && -n "$part_num" ]]; then
+    # If image was dd'd to a larger device, the GPT secondary header is
+    # still at the old end-of-disk; sgdisk -e moves it before growpart.
+    sgdisk -e "/dev/$parent_disk" >/dev/null 2>&1 || true
+    if growpart "/dev/$parent_disk" "$part_num" >/dev/null 2>&1; then
+        echo "veyage-overlay-resize: grew /dev/$parent_disk partition $part_num"
+    fi
+fi
+
+# Online resize. f2fs supports it on recent kernels; we don't need to
+# unmount the overlay (which we couldn't do anyway — it's the rootfs
+# upper). The mountpoint passed here is the overlayroot upper-mount.
+if mountpoint -q /media/root-rw; then
+    if resize.f2fs /media/root-rw >/dev/null 2>&1; then
+        echo "veyage-overlay-resize: resized $dev"
+    fi
+fi
+
+touch "$MARKER"

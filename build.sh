@@ -72,7 +72,7 @@ check_prereqs() {
     log "Checking prerequisites"
     [[ $EUID -eq 0 ]] || fail "Must run as root"
     [[ "$(uname -m)" == "x86_64" ]] || fail "Build host must be x86_64 (got $(uname -m))"
-    for cmd in debootstrap mksquashfs chroot rsync sgdisk grub-install mkfs.fat mkfs.ext4 losetup wget; do
+    for cmd in debootstrap mksquashfs chroot rsync sgdisk grub-install mkfs.fat mkfs.f2fs losetup wget; do
         command -v "$cmd" >/dev/null || fail "Missing command: $cmd"
     done
     case "$LOG_SHIPPER" in
@@ -162,10 +162,12 @@ squashfs
 overlay
 loop
 ext4
+f2fs
 virtio_blk
 virtio_pci
 virtio_net
 EOF
+    chmod 0755 "$CHROOT/etc/initramfs-tools/hooks/veyage-f2fs"
     # Patch overlayroot's init-bottom hook: drop the `mount -o remount,ro $ROOTMNT`
     # call that fires whenever the kernel cmdline contains `ro`. Squashfs requires
     # `ro` at the kernel mount step, but the overlay we stack on top must stay rw
@@ -175,14 +177,11 @@ EOF
     if [[ -f "$hook" ]] && grep -q 'remount,ro "$ROOTMNT"' "$hook"; then
         sed -i 's|^\(\s*\)mount -o remount,ro "\$ROOTMNT"|\1: # VEyage: skip remount,ro — keep overlay rw\n\1true|' "$hook"
     fi
-    # Pre-generate SSH host keys at build time. sshd-keygen.service has
-    # ConditionFirstBoot=yes which doesn't fire reliably here, so we ship keys
-    # in the squashfs. NOTE: every image built from the same source has the
-    # same keys — Phase 3 follow-up should regenerate onto the RW state
-    # partition on first deploy.
-    if [[ -d "$CHROOT/etc/ssh" ]] && ! ls "$CHROOT/etc/ssh/"ssh_host_*_key >/dev/null 2>&1; then
-        chroot_run ssh-keygen -A
-    fi
+    # No build-time SSH host keys: ssh.service has an ExecStartPre drop-in
+    # that runs `ssh-keygen -A` (idempotent) before each start, so the keys
+    # are generated on first boot against the target device's own entropy.
+    # /etc/ssh sits on the persistent f2fs overlay, so they persist after.
+    rm -f "$CHROOT/etc/ssh/"ssh_host_*
 }
 
 generate_initramfs() {
@@ -195,6 +194,22 @@ generate_initramfs() {
     # /etc/overlayroot.conf) applied after install.
     log "Updating initramfs to include overlay/ changes"
     chroot_run update-initramfs -u -k all
+}
+
+prepare_runtime() {
+    log "Preparing runtime: cleaning build leftovers, enabling veyage units"
+
+    # Build-time leftovers that would otherwise re-trigger work on every boot:
+    #   - interfaces.new: ifupdown's atomic-rename file from the initial
+    #     network config write; pvenetcommit picks it up at every boot.
+    #   - alternatives/*.dpkg-tmp: from interrupted maintainer-script runs.
+    rm -f "$CHROOT/etc/network/interfaces.new"
+    rm -f "$CHROOT/etc/alternatives/"*.dpkg-tmp
+
+    chroot_run systemctl enable \
+        veyage-firstboot.service \
+        veyage-network-init.service \
+        veyage-overlay-resize.service 2>/dev/null || true
 }
 
 export_boot_artifacts() {
@@ -221,10 +236,9 @@ cleanup_chroot() {
     rm -rf "$CHROOT/var/lib/apt/lists/"*
     rm -rf "$CHROOT/var/cache/"* "$CHROOT/tmp/"* "$CHROOT/var/tmp/"*
     : > "$CHROOT/etc/machine-id"          # regenerated on first boot
-    # Note: SSH host keys are NOT removed here — sshd-keygen.service has
-    # ConditionFirstBoot=yes that doesn't trigger reliably under our overlay
-    # setup. Keys ship pre-generated (see configure_readonly). Replace them
-    # at first deploy if you care about per-host uniqueness.
+    # SSH host keys: not shipped in the image. The ssh.service drop-in
+    # runs ssh-keygen -A as ExecStartPre, generating fresh per-host keys
+    # on first boot. They persist on the f2fs overlay.
     umount_chroot
 }
 
@@ -244,25 +258,25 @@ build_image() {
     [[ -f "$squashfs" ]] || fail "Missing squashfs at $squashfs"
     [[ -f "$OUT/vmlinuz" && -f "$OUT/initrd.img" ]] || fail "Missing kernel/initrd in $OUT"
 
-    # state_mb is just the image's initial size. veyage-state-init grows it
-    # to fill the actual device on first boot via growpart+resize2fs, so we
-    # ship a small image and let it expand on whatever USB/SD it's dd'd to.
-    local squash_size_mb esp_mb=128 state_mb=256 total_mb
+    # overlay_mb is just the image's initial size. veyage-overlay-resize
+    # grows it on first boot via growpart + resize.f2fs, so we ship a small
+    # image and let it expand on whatever USB/SD it's dd'd to.
+    local squash_size_mb esp_mb=128 overlay_mb=256 total_mb
     squash_size_mb=$(( ( $(stat -c%s "$squashfs") + 1024*1024 - 1 ) / (1024*1024) ))
-    total_mb=$(( esp_mb + squash_size_mb + state_mb + 4 ))
-    log "Assembling bootable disk image: ESP ${esp_mb}M + rootfs ${squash_size_mb}M + state ${state_mb}M = ${total_mb}M"
+    total_mb=$(( esp_mb + squash_size_mb + overlay_mb + 4 ))
+    log "Assembling bootable disk image: ESP ${esp_mb}M + rootfs ${squash_size_mb}M + overlay ${overlay_mb}M = ${total_mb}M"
 
     rm -f "$img"
     truncate -s "${total_mb}M" "$img"
 
     # GPT layout for UEFI boot:
-    #   p1 ESP   (FAT32, EFI/BOOT/BOOTX64.EFI)
-    #   p2 rootfs (raw squashfs partition)
-    #   p3 state  (ext4, persistent state)
+    #   p1 ESP     (FAT32, EFI/BOOT/BOOTX64.EFI)
+    #   p2 rootfs  (raw squashfs partition)
+    #   p3 overlay (f2fs, persistent overlay upper)
     sgdisk --clear \
         --new=1:0:+${esp_mb}M --typecode=1:ef00 --change-name=1:ESP \
         --new=2:0:+${squash_size_mb}M --typecode=2:8300 --change-name=2:rootfs \
-        --new=3:0:0           --typecode=3:8300 --change-name=3:state \
+        --new=3:0:0           --typecode=3:8300 --change-name=3:overlay \
         "$img" >/dev/null
 
     local rootfs_partuuid
@@ -277,15 +291,17 @@ build_image() {
         size=$( sgdisk -i "$n" "$img" | awk '/Partition size/ {print $3}')
         losetup --offset $((first * 512)) --sizelimit $((size * 512)) -f --show "$img"
     }
-    local lp_esp lp_root lp_state
+    local lp_esp lp_root lp_overlay
     lp_esp=$(_part_loop 1)
     lp_root=$(_part_loop 2)
-    lp_state=$(_part_loop 3)
-    log "Partition loops: ESP=$lp_esp rootfs=$lp_root state=$lp_state"
+    lp_overlay=$(_part_loop 3)
+    log "Partition loops: ESP=$lp_esp rootfs=$lp_root overlay=$lp_overlay"
 
     mkfs.fat -F32 -n EFI "$lp_esp" >/dev/null
     dd if="$squashfs" of="$lp_root" bs=4M conv=notrunc status=none
-    mkfs.ext4 -L state -F "$lp_state" >/dev/null
+    # mkfs.f2fs -f for force (loop dev isn't recognized as flash without it).
+    # Label "overlay" matches LABEL=overlay in /etc/overlayroot.conf.
+    mkfs.f2fs -l overlay -f "$lp_overlay" >/dev/null
 
     local mnt; mnt=$(mktemp -d)
     mount "$lp_esp" "$mnt"
@@ -326,7 +342,7 @@ EOF
 
     umount "$mnt"
     rmdir "$mnt"
-    losetup -d "$lp_esp" "$lp_root" "$lp_state"
+    losetup -d "$lp_esp" "$lp_root" "$lp_overlay"
 
     log "Bootable image: $img ($(ls -lh "$img" | awk '{print $5}'))"
 }
@@ -341,6 +357,7 @@ main() {
     apply_overlay
     configure_readonly
     generate_initramfs
+    prepare_runtime
     export_boot_artifacts
     cleanup_chroot
     pack_squashfs

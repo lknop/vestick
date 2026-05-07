@@ -1,8 +1,7 @@
 [Unit]
-Description=VEyage first-boot identity setup (interactive: hostname + root password)
-After=veyage-state.service
+Description=VEyage first-boot identity setup (interactive: SSH keys + hostname + root password)
 Before=veyage-network-init.service networking.service getty.target
-RequiresMountsFor=/mnt/state
+ConditionPathExists=!/var/lib/veyage/.firstboot-done
 
 [Service]
 Type=oneshot

@@ -1,14 +1,13 @@
 # VEyage
 
-Minimal Debian Trixie image with a read-only root filesystem, designed as a base for Proxmox VE running from USB stick or SD card.
-
-> **Status: early development.** The Debian-base path boots end-to-end in QEMU under UEFI (squashfs root + tmpfs overlay via `overlayroot`, `chrony` / `systemd-logind` / `ssh` all up). The Proxmox layer (`INCLUDE_PROXMOX=1`) is not wired yet, and the persistent state partition is created but not mounted/bound into the running system.
+Minimal Debian Trixie image with a read-only base filesystem, designed as a Proxmox VE appliance for USB stick or SD card.
 
 ## What this is
 
 A small, opinionated build pipeline that produces a Debian 13 (Trixie) image with:
 
-- **Read-only root** — squashfs lower layer plus a tmpfs/overlay upper, so the running system never writes to the boot media outside a small persistent state slice.
+- **Read-only squashfs base + persistent f2fs overlay** — the read-only base layer is never modified at runtime; all writes (config edits, `apt install`, package state) land in a flash-friendly f2fs upper layer that captures exactly the diff from the shipped image.
+- **Tmpfs for chatty paths** — logs, caches, perf graphs, and similar regenerable state route to RAM so flash takes only the writes that actually need to persist.
 - **Curated minimal package set** — `debootstrap --variant=minbase` plus a hand-picked list, installed with `--no-install-recommends`. No `man-db`, no `cron`, no `os-prober`, no `popularity-contest`.
 - **Proxmox VE on top** — fetched from the Proxmox `pve-no-subscription` apt repository at build time (not bundled in this repo).
 - **Remote logging by default** — `journald` runs with `Storage=volatile`; logs leave the box via a build-time-selectable shipper (rsyslog forwarding, `systemd-journal-upload`, or Fluent Bit).
@@ -21,11 +20,13 @@ The name "VEyage" is a nod to the long-defunct [Voyage Linux](http://svn.voyage.
 
 ## Architecture at a glance
 
-| Layer | Mount | Contents |
+| Layer | Filesystem | Examples |
 |---|---|---|
-| RO squashfs | `/` (lower) | `/usr`, `/lib`, most of `/etc` — image-immutable |
-| RW partition | mounted into `/var/lib/pve-cluster`, `/etc/network`, SSH host keys, etc. | Stateful Proxmox bits, persists across reboots |
-| tmpfs | `/var/log`, `/var/cache`, `/tmp`, `/run` | Ephemeral, lost on reboot |
+| Image-immutable | squashfs (compressed, RO) | `/usr`, `/lib`, kernel, initrd, distro `/etc` defaults |
+| Persistent | f2fs (overlay upper) | any operator edit, `apt install`, `/etc/network/`, SSH host keys, `/var/lib/pve-cluster/` |
+| Volatile | tmpfs | `/var/log`, `/var/cache`, `/var/tmp`, `/tmp`, `/var/lib/rrdcached`, `/var/lib/systemd`, `/var/lib/{vz,pve-manager,postfix}` |
+
+The overlay upper is *exactly* the diff between the running system and the shipped image — useful for diagnostics and for monitoring drift.
 
 VM and container storage should live **off the boot media** (separate disk, NFS, iSCSI, Ceph) — `/var/lib/vz` on a USB stick is not a good idea regardless of how clever the root filesystem is.
 
@@ -101,7 +102,7 @@ overlay/                   Files merged into chroot before squashing
 out/                       Build artifacts (gitignored)
   rootfs.squashfs          The read-only root layer
   vmlinuz, initrd.img      Extracted from the chroot for direct kernel boot
-  veyage.img               Bootable UEFI disk image (GPT: ESP + rootfs + state)
+  veyage.img               Bootable UEFI disk image (GPT: ESP + rootfs + overlay)
 ```
 
 ## Disk image layout
@@ -112,7 +113,7 @@ The `veyage.img` produced by `build.sh` is GPT-partitioned for UEFI:
 |---|---|---|---|
 | 1 | EFI System (FAT32, label `EFI`) | 128 MB | `BOOTX64.EFI` (self-contained, built with `grub-mkstandalone`), `vmlinuz`, `initrd.img` |
 | 2 | rootfs (raw squashfs) | sized to fit | the read-only root, mounted by the kernel at boot |
-| 3 | state (ext4, label `state`) | 256 MB | for persistent `/var/lib/pve-cluster`, network config, SSH host keys, etc. **Not yet wired into the running system.** |
+| 3 | overlay (f2fs, label `overlay`) | 256 MB initial; resized to fill device on first boot | the overlay upper layer — captures every persistent write |
 
 ## Documentation
 

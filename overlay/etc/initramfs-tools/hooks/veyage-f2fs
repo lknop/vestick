@@ -1,0 +1,19 @@
+#!/bin/sh
+# Pull f2fs userspace tools into the initramfs so overlayroot's
+# init-bottom hook can mkfs/fsck the f2fs upper layer on first boot.
+# overlayroot's own hook copies tools for ext4 unconditionally; for
+# f2fs we ship them ourselves to be safe across overlayroot versions.
+
+PREREQ=""
+prereqs() { echo "$PREREQ"; }
+
+case $1 in
+    prereqs) prereqs; exit 0 ;;
+esac
+
+. /usr/share/initramfs-tools/hook-functions
+
+for tool in mkfs.f2fs fsck.f2fs; do
+    bin=$(command -v "$tool" 2>/dev/null) || continue
+    copy_exec "$bin"
+done
