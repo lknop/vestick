@@ -4,7 +4,7 @@ Settled design decisions for the VEstick build, in one place. Update this when y
 
 ## Goal
 
-A minimal Debian Trixie image with a read-only base filesystem, designed as a Proxmox VE appliance that boots from USB stick or SD card. Inspired by Voyage Linux (curated package set, clear write boundaries) and OpenWrt (squashfs lower + flash-friendly upper) — the appliance lets the operator change anything (edit configs, `apt install`, run `update-grub`) and have it persist, while keeping the base layer immutable for integrity and read performance, and routing chatty writes (logs, perf graphs, caches) to RAM so flash takes only the writes that *should* persist.
+A minimal Debian Trixie + Proxmox VE image that boots from USB stick or SD card. Squashfs base is immutable; an f2fs overlay captures every persistent write (config edits, `apt install`, etc.); chatty paths (logs, caches, perf graphs) go to tmpfs. Inspired by Voyage Linux and OpenWrt.
 
 ## Runtime model
 
@@ -30,13 +30,13 @@ tmpfs mounts overlay /var/log, /var/cache, /var/tmp, /tmp,
 
 The overlay upper is *exactly* the diff between the running system and the squashfs lower — every persistent write is captured automatically, no allow-list to maintain.
 
-**Why f2fs for the upper layer.** F2FS is designed for NAND flash with FTL (USB sticks, microSD): log-structured sequential writes, segment-aligned to NAND erase blocks, lower write amplification, good crash recovery. Same reason OpenWrt picked f2fs for its overlay role across its installed base. The next-best choice would be ext4 with `noatime,commit=600` — more universally readable from a recovery laptop, less flash-tuned. F2FS wants ≥ 10–15 % free segments for GC headroom; on a typical SD card sized overlay (≥ 1 GB) this is trivial.
+**Why f2fs.** Designed for NAND with FTL: log-structured writes, segment-aligned to erase blocks, low write amplification, good crash recovery. OpenWrt picked it for the same reasons. Alternative: ext4 with `noatime,commit=600` — more recovery-laptop-friendly, less flash-tuned. F2FS wants ≥ 10–15 % free segments for GC; trivial on a ≥ 1 GB overlay.
 
-**Why journald `Storage=volatile`.** PVE's pmxcfs and pveproxy log every cluster gossip packet; on flash this would be 100s of MB / day on an idle node. Journal in RAM, forwarded off-box via the chosen log shipper (rsyslog default).
+**Why journald `Storage=volatile`.** Idle PVE writes 100s of MB/day to the journal (cluster gossip, pveproxy). Journal in RAM, off-box via the chosen shipper (rsyslog default).
 
 ## Volatile mounts
 
-A small curated list of paths whose contents are continuously rewritten and either regenerable or genuinely ephemeral. Sending these to RAM keeps steady-state flash writes in the KB/hour range on an idle PVE node.
+Curated list of paths that are continuously rewritten and either regenerable or genuinely ephemeral. Sending these to RAM keeps idle-state flash writes in the KB/hour range.
 
 | Mount | Size | Why |
 |---|---|---|
@@ -47,9 +47,9 @@ A small curated list of paths whose contents are continuously rewritten and eith
 | `/var/lib/rrdcached` | 128 M | PVE perf graphs reset on reboot — graph history traded for substantially lower flash write rate (rrdcached is the dominant idle-state writer at ~MB/hour) |
 | `/var/lib/vz` | 32 M | default Proxmox `local` storage placeholder; tmpfs guards the "I put my VM on the boot media" misuse case |
 
-Everything else — `/var/lib/systemd`, `/var/lib/postfix`, `/var/spool/postfix`, `/var/lib/pve-manager`, etc. — rides the persistent overlay. Their write rate is low and persistence is either useful (mail queue durability, timer-stamp correctness, lingering users) or harmless.
+Everything else (`/var/lib/systemd`, `/var/lib/postfix`, `/var/spool/postfix`, `/var/lib/pve-manager`, …) sits on the overlay. Low write rate; persistence is useful (mail queue, timer stamps, lingering users) or harmless.
 
-`tmpfiles.d` configs in `overlay/etc/tmpfiles.d/` recreate the subdirs PVE tools expect on every boot — without them, pmxcfs and pvestatd race to mkdir into the freshly-mounted empty tmpfs and log noisy errors.
+`overlay/etc/tmpfiles.d/` recreates subdirs PVE tools expect on every boot; without them pmxcfs and pvestatd log mkdir errors against the empty tmpfs.
 
 ## Boot path (UEFI only)
 
@@ -61,9 +61,9 @@ Everything else — `/var/lib/systemd`, `/var/lib/postfix`, `/var/spool/postfix`
 | initramfs | mounts the squashfs via the kernel `root=` PARTUUID; `init-bottom/overlayroot` then mounts `/dev/disk/by-label/overlay` (f2fs, formatted on first boot if missing) as upperdir, mounts the overlayfs, pivots into it |
 | systemd PID 1 | `/etc/fstab` brings up the tmpfs mounts; `vestick-overlay-resize` grows the overlay to fill the device on first boot; rest of multi-user starts |
 
-BIOS boot is intentionally not supported — modern Proxmox-target hardware is UEFI.
+BIOS boot is not supported.
 
-`grub-install --removable` was tried and produces a thin BOOTX64.EFI that hunts for modules on the ESP at runtime — it does not reliably embed `--modules=`. `grub-mkstandalone` is the better choice.
+`grub-install --removable` produces a thin BOOTX64.EFI that loads modules from the ESP at runtime and doesn't reliably embed `--modules=`. `grub-mkstandalone` bakes modules and `grub.cfg` into one binary; preferred.
 
 ### Why overlayroot, with a patch
 
@@ -73,17 +73,17 @@ if [ "${cmdline_ro}" = "true" ]; then
     mount -o remount,ro "$ROOTMNT"
 fi
 ```
-Squashfs *requires* the kernel cmdline `ro` flag at mount time. The unpatched hook then forwards `ro` to the overlay, locking the running system in read-only mode. Every systemd unit using `StateDirectory=` or `LogsDirectory=` (chrony, systemd-logind, sshd-keygen, …) fails with EROFS.
+Squashfs requires `ro` on the kernel cmdline. The unpatched hook then propagates `ro` to the overlay, locking the running system read-only — every unit using `StateDirectory=` / `LogsDirectory=` (chrony, systemd-logind, sshd-keygen, …) fails with EROFS.
 
-`build.sh::configure_readonly` sed-removes that line. **This patch is essential — do not undo it without an alternative.**
+`build.sh::configure_readonly` sed-removes that line. **Essential — do not revert without an alternative.**
 
-### Configuring overlayroot for f2fs
+### overlayroot config for f2fs
 
 ```
 overlayroot="device:dev=LABEL=overlay,fstype=f2fs,mkfs=1"
 ```
 
-`mkfs=1` runs `mkfs.f2fs` from the initramfs the first time the partition has no filesystem. `f2fs-tools` must be installed in the chroot before `update-initramfs` runs so the hook can copy `mkfs.f2fs` and `fsck.f2fs` into the initramfs.
+`mkfs=1` makes the initramfs hook run `mkfs.f2fs` if the partition is unformatted. `f2fs-tools` must be in the chroot before `update-initramfs` so the hook can copy `mkfs.f2fs` and `fsck.f2fs`.
 
 ## Disk image layout
 
@@ -95,9 +95,9 @@ GPT, partitioned by `sgdisk`:
 | 2 | Linux fs (raw squashfs) | `rootfs` | sized to fit | The read-only base layer; mounted by the kernel as squashfs |
 | 3 | Linux fs (f2fs) | `overlay` | small (~256 MB) | Persistent overlay upper; **resized on first boot to fill the device** |
 
-The squashfs partition has no filesystem wrapping it — the squashfs *is* the partition contents. The kernel mounts it directly via `root=PARTUUID=… rootfstype=squashfs`.
+The squashfs is the partition contents directly (no fs wrapping). Kernel mounts it via `root=PARTUUID=… rootfstype=squashfs`.
 
-The overlay partition starts small in the shipped image; `vestick-overlay-resize.service` runs once on first boot, calls `growpart` to extend the partition to the end of whatever device the image was dd'd onto, and `resize.f2fs` to grow the filesystem to match. F2FS supports online resize on recent kernels.
+The overlay ships small; `vestick-overlay-resize.service` runs once on first boot — `growpart` extends the partition to the device end, `resize.f2fs` grows the filesystem online.
 
 ## Proxmox-specific quirks handled
 
@@ -106,21 +106,21 @@ The overlay partition starts small in the shipped image; `vestick-overlay-resize
 | `update-alternatives` build leftovers | `/etc/alternatives/*.dpkg-tmp` left over from the build's maintainer-script runs cause `update-alternatives` to retry the cleanup at every boot. | `build.sh::prepare_runtime` removes them before the squashfs is packed. |
 | `interfaces.new` build leftover | ifupdown's atomic-rename file from initial network config write; `pvenetcommit` would otherwise commit it on every boot. | `build.sh::prepare_runtime` removes it. |
 
-`pmxcfs` (pve-cluster) needs a non-loopback hostname → IP entry in `/etc/hosts` to start. `vestick-network-init` writes both `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot, mirroring the stock Proxmox installer's static-IP-prompt step. After first boot, `/etc/hosts` is on the persistent overlay and edited via the web UI like a normal Proxmox install.
+`pmxcfs` needs a non-loopback hostname → IP in `/etc/hosts`. `vestick-network-init` writes `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot — same as the stock Proxmox installer. Subsequent edits go through the web UI.
 
 ## Write boundaries (operator-visible)
 
-- `apt install`, `apt upgrade`, `update-grub`: just work. Writes land in the f2fs overlay.
-- Editing a config under `/etc/`: just works.
-- Logs: in RAM, ship them off-box.
-- Per-host SSH keys: generated on first boot by an `ssh.service` ExecStartPre drop-in that runs `ssh-keygen -A` idempotently. The build ships no keys; each dd'd device gets unique keys against its own entropy, persisted on the overlay.
-- VM/container storage (`/var/lib/vz/...`): **not** on the boot media. Configure real storage in `/etc/pve/storage.cfg`. The default `local` storage path is a tmpfs placeholder so PVE tools don't EROFS-spam.
+- `apt install`, `apt upgrade`, `update-grub`: writes land in the f2fs overlay, persist.
+- Editing `/etc/*` files: persist.
+- Logs: in RAM, shipped off-box.
+- Per-host SSH keys: generated on first boot by `vestick-sshkeys.service` (sysinit oneshot, runs `ssh-keygen -A`). Build ships no keys; each dd'd device gets unique keys, persisted on the overlay.
+- VM/container storage (`/var/lib/vz/...`): **not** on the boot media. Configure real storage in `/etc/pve/storage.cfg`. The default `local` path is a tmpfs placeholder.
 
 ## Monitoring
 
-The overlay's upperdir is *exactly* the diff between the running system and the read-only base. Monitoring its used space tells you "how far has this system drifted from the image" — far higher signal than `du` on a regular rootfs.
+The overlay upperdir *is* the diff between the running system and the base. Its size measures how far the system has drifted from the shipped image.
 
-By design no monitoring is shipped in the image. The build provides the substrate (a single labeled f2fs partition with a stable mountpoint at `/media/root-rw`); operators wire monitoring to their existing infrastructure:
+No monitoring shipped. The substrate (labeled f2fs partition, mounted at `/media/root-rw`) is enough for operators to wire to their own:
 
 | What to watch | Where |
 |---|---|
@@ -132,12 +132,12 @@ By design no monitoring is shipped in the image. The build provides the substrat
 ## Build approach
 
 - **Host:** privileged Proxmox LXC running Debian Trixie with `features: nesting=1,keyctl=1`, plus `/dev/kvm` and `/dev/loop[0-N]` + `/dev/loop-control` passed through.
-- **Pipeline:** `debootstrap --variant=minbase` → write apt sources → install packages with `--no-install-recommends` → apply overlay tree → patch overlayroot init-bottom hook → strip openssh-server's build-time host keys (regenerated on first boot via the `ssh.service` drop-in) → `update-initramfs -u -k all` → `prepare_runtime` (remove build leftovers, enable vestick units) → export kernel/initrd → `mksquashfs` → assemble GPT image (ESP, raw squashfs partition, f2fs overlay partition) → `grub-mkstandalone` BOOTX64.EFI.
+- **Pipeline:** `debootstrap --variant=minbase` → write apt sources → install packages (`--no-install-recommends`) → apply overlay tree → patch overlayroot init-bottom hook → strip openssh-server's build-time host keys (regenerated on first boot by `vestick-sshkeys.service`) → `update-initramfs -u -k all` → `prepare_runtime` (clean build leftovers, enable vestick units) → export kernel/initrd → `mksquashfs` → assemble GPT image (ESP, raw squashfs, f2fs overlay) → `grub-mkstandalone` BOOTX64.EFI.
 - **Two profiles** controlled by `INCLUDE_PROXMOX`:
   - `INCLUDE_PROXMOX=0` — Debian + `linux-image-amd64`, no Proxmox repo.
   - `INCLUDE_PROXMOX=1` — adds Proxmox apt repo + `proxmox-ve` metapackage + `proxmox-default-kernel`.
 
-Skip `proxmox-boot-tool` — that's for ZFS-on-root or systemd-boot setups.
+`proxmox-boot-tool` is not used (it targets ZFS-on-root and systemd-boot).
 
 ## Distribution stance
 
