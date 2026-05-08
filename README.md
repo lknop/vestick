@@ -37,7 +37,7 @@ VM and container storage belongs **off the boot media** (separate disk, NFS, iSC
 - Debian or Ubuntu on **amd64**. PVE has no aarch64 target, so the build host must be x86_64. macOS aarch64 hosts: use a Lima x86_64 VM (QEMU-emulated, slow) or an amd64 LXC/VM elsewhere.
 - Root (or sudo) access.
 - ~8 GB free disk for the chroot + output image.
-- Build deps: `debootstrap squashfs-tools rsync curl gpg ca-certificates dosfstools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
+- Build deps: `debootstrap squashfs-tools rsync wget gpg ca-certificates dosfstools f2fs-tools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
 - Loop devices and KVM. Inside a Proxmox LXC build host, pass through `/dev/loop[0-N]`, `/dev/loop-control`, `/dev/kvm` plus the relevant cgroup permissions.
 
 ## Quickstart
@@ -119,6 +119,7 @@ The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 
 ## Documentation
 
+- [docs/installation.md](docs/installation.md) — flash to USB/SD, optional pre-boot partition grow, first-boot wizards, troubleshooting.
 - [docs/architecture.md](docs/architecture.md) — design decisions: runtime model, overlayroot patch, UEFI boot path, GPT layout, write boundaries.
 - [docs/roadmap.md](docs/roadmap.md) — phase-by-phase status.
 - [docs/build-internals.md](docs/build-internals.md) — package rationale, overlayroot patch details, LXC build-env quirks. Read before touching the chroot, initramfs, loop devices, or `/dev` handling.
