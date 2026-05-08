@@ -1,14 +1,14 @@
 [Unit]
-Description=VEyage first-boot resize of f2fs overlay
+Description=VEstick first-boot resize of f2fs overlay
 DefaultDependencies=no
 After=local-fs.target
 Before=basic.target sysinit.target
-ConditionPathExists=!/var/lib/veyage/.overlay-resized
+ConditionPathExists=!/var/lib/vestick/.overlay-resized
 
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=/usr/local/sbin/veyage-overlay-resize
+ExecStart=/usr/local/sbin/vestick-overlay-resize
 
 [Install]
 WantedBy=sysinit.target

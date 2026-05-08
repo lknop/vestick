@@ -1,0 +1,19 @@
+[Unit]
+Description=VEstick first-boot identity setup (interactive: SSH keys + hostname + root password)
+Before=vestick-network-init.service networking.service getty.target
+ConditionPathExists=!/var/lib/vestick/.firstboot-done
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+StandardInput=tty
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/console
+TTYReset=yes
+TTYVHangup=yes
+TimeoutStartSec=infinity
+ExecStart=/usr/local/sbin/vestick-firstboot
+
+[Install]
+WantedBy=networking.service

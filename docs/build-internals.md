@@ -37,7 +37,7 @@ Stock Debian's `openssh-server` postinst runs `ssh-keygen -A` at install time. I
 The fix:
 
 - **Build-time:** `configure_readonly` deletes `/etc/ssh/ssh_host_*` from the chroot. The squashfs ships with no keys.
-- **Runtime:** `overlay/etc/systemd/system/ssh.service.d/veyage-keygen.conf` adds `ExecStartPre=/usr/bin/ssh-keygen -A` to `ssh.service`. `ssh-keygen -A` is idempotent — it only creates the keys that don't exist — so it runs once on first boot, and is a no-op on every subsequent start. `/etc/ssh` is on the persistent overlay, so the keys persist.
+- **Runtime:** `overlay/etc/systemd/system/ssh.service.d/vestick-keygen.conf` adds `ExecStartPre=/usr/bin/ssh-keygen -A` to `ssh.service`. `ssh-keygen -A` is idempotent — it only creates the keys that don't exist — so it runs once on first boot, and is a no-op on every subsequent start. `/etc/ssh` is on the persistent overlay, so the keys persist.
 
 Don't be tempted to delete keys without the drop-in: stock Debian has no auto-regen-if-missing logic, and `ssh.service` would just fail to start.
 
@@ -114,7 +114,7 @@ Files synced from macOS (uid 501, gid `staff`) preserve those numeric ids in the
 
 ## Boot-time debugging
 
-`/usr/local/bin/veyage-diag` is shipped in the squashfs. Boot with `init=/usr/local/bin/veyage-diag` on the kernel cmdline to get a pre-systemd dump of:
+`/usr/local/bin/vestick-diag` is shipped in the squashfs. Boot with `init=/usr/local/bin/vestick-diag` on the kernel cmdline to get a pre-systemd dump of:
 - mount table
 - `/proc/filesystems`
 - listings of `/`, `/var`, `/var/lib`

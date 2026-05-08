@@ -13,8 +13,8 @@ dbus
 # overlayroot's initramfs hook unconditionally bundles mke2fs (it's a
 # Recommends, not a Depends, so --no-install-recommends would otherwise skip
 # it). f2fs-tools provides mkfs.f2fs/fsck.f2fs/resize.f2fs — initramfs hook
-# (overlay/etc/initramfs-tools/hooks/veyage-f2fs) copies them into initramfs
-# for the first-boot mkfs; resize.f2fs runs at runtime via veyage-overlay-resize.
+# (overlay/etc/initramfs-tools/hooks/vestick-f2fs) copies them into initramfs
+# for the first-boot mkfs; resize.f2fs runs at runtime via vestick-overlay-resize.
 # busybox gives the initramfs a real `grep` (and friends) — without it,
 # mkinitramfs falls back to klibc-utils, and overlayroot's init-bottom
 # script silently fails its overlay-availability check.

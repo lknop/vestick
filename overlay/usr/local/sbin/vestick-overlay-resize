@@ -6,14 +6,14 @@
 
 set -euo pipefail
 
-MARKER=/var/lib/veyage/.overlay-resized
+MARKER=/var/lib/vestick/.overlay-resized
 mkdir -p "$(dirname "$MARKER")"
 
 [[ -e "$MARKER" ]] && exit 0
 
 dev=$(blkid -L overlay 2>/dev/null || true)
 if [[ -z "$dev" ]]; then
-    echo "veyage-overlay-resize: no partition labeled 'overlay', skipping" >&2
+    echo "vestick-overlay-resize: no partition labeled 'overlay', skipping" >&2
     touch "$MARKER"
     exit 0
 fi
@@ -26,7 +26,7 @@ if [[ -n "$parent_disk" && -n "$part_num" ]]; then
     # still at the old end-of-disk; sgdisk -e moves it before growpart.
     sgdisk -e "/dev/$parent_disk" >/dev/null 2>&1 || true
     if growpart "/dev/$parent_disk" "$part_num" >/dev/null 2>&1; then
-        echo "veyage-overlay-resize: grew /dev/$parent_disk partition $part_num"
+        echo "vestick-overlay-resize: grew /dev/$parent_disk partition $part_num"
     fi
 fi
 
@@ -35,7 +35,7 @@ fi
 # upper). The mountpoint passed here is the overlayroot upper-mount.
 if mountpoint -q /media/root-rw; then
     if resize.f2fs /media/root-rw >/dev/null 2>&1; then
-        echo "veyage-overlay-resize: resized $dev"
+        echo "vestick-overlay-resize: resized $dev"
     fi
 fi
 

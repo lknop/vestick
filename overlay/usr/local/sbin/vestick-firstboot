@@ -1,25 +1,25 @@
 #!/bin/bash
-# VEyage first-boot identity setup. Runs once on the console to prompt
+# VEstick first-boot identity setup. Runs once on the console to prompt
 # for hostname and root password. /etc and /var/lib are on the persistent
 # f2fs overlay, so writes are normal in-place edits.
 #
 # SSH host keys are NOT regenerated here — that's handled by the
 # ssh.service ExecStartPre drop-in (overlay/etc/systemd/system/ssh.service.d/
-# veyage-keygen.conf), which runs `ssh-keygen -A` idempotently before
+# vestick-keygen.conf), which runs `ssh-keygen -A` idempotently before
 # every sshd start. With /etc/ssh on the persistent overlay, keys are
 # created on first boot and persist after.
 
 set -euo pipefail
 
-MARKER=/var/lib/veyage/.firstboot-done
+MARKER=/var/lib/vestick/.firstboot-done
 mkdir -p "$(dirname "$MARKER")"
 
 [[ -e "$MARKER" ]] && exit 0
 
 echo
-echo "=== VEyage first-boot setup ==="
+echo "=== VEstick first-boot setup ==="
 
-current=$(cat /etc/hostname 2>/dev/null || echo "veyage")
+current=$(cat /etc/hostname 2>/dev/null || echo "vestick")
 read -rp "System hostname [$current]: " hostname
 hostname="${hostname:-$current}"
 echo "$hostname" > /etc/hostname
@@ -36,4 +36,4 @@ echo "root:$pw1" | chpasswd
 unset pw1 pw2
 
 touch "$MARKER"
-echo "veyage-firstboot: hostname=$hostname, root password set"
+echo "vestick-firstboot: hostname=$hostname, root password set"

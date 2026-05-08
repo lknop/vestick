@@ -1,6 +1,6 @@
-# VEyage architecture
+# VEstick architecture
 
-Settled design decisions for the VEyage build, in one place. Update this when you change direction; do not let it lie about what the code does.
+Settled design decisions for the VEstick build, in one place. Update this when you change direction; do not let it lie about what the code does.
 
 ## Goal
 
@@ -59,7 +59,7 @@ Everything else — `/var/lib/systemd`, `/var/lib/postfix`, `/var/spool/postfix`
 | GRUB | self-contained binary built with `grub-mkstandalone` (modules + `grub.cfg` baked in); `search --label EFI --set=root` to pivot from its memdisk to the real ESP |
 | Linux kernel | EFI-stub loaded with cmdline `root=PARTUUID=… rootfstype=squashfs ro …` |
 | initramfs | mounts the squashfs via the kernel `root=` PARTUUID; `init-bottom/overlayroot` then mounts `/dev/disk/by-label/overlay` (f2fs, formatted on first boot if missing) as upperdir, mounts the overlayfs, pivots into it |
-| systemd PID 1 | `/etc/fstab` brings up the tmpfs mounts; `veyage-overlay-resize` grows the overlay to fill the device on first boot; rest of multi-user starts |
+| systemd PID 1 | `/etc/fstab` brings up the tmpfs mounts; `vestick-overlay-resize` grows the overlay to fill the device on first boot; rest of multi-user starts |
 
 BIOS boot is intentionally not supported — modern Proxmox-target hardware is UEFI.
 
@@ -97,7 +97,7 @@ GPT, partitioned by `sgdisk`:
 
 The squashfs partition has no filesystem wrapping it — the squashfs *is* the partition contents. The kernel mounts it directly via `root=PARTUUID=… rootfstype=squashfs`.
 
-The overlay partition starts small in the shipped image; `veyage-overlay-resize.service` runs once on first boot, calls `growpart` to extend the partition to the end of whatever device the image was dd'd onto, and `resize.f2fs` to grow the filesystem to match. F2FS supports online resize on recent kernels.
+The overlay partition starts small in the shipped image; `vestick-overlay-resize.service` runs once on first boot, calls `growpart` to extend the partition to the end of whatever device the image was dd'd onto, and `resize.f2fs` to grow the filesystem to match. F2FS supports online resize on recent kernels.
 
 ## Proxmox-specific quirks handled
 
@@ -106,7 +106,7 @@ The overlay partition starts small in the shipped image; `veyage-overlay-resize.
 | `update-alternatives` build leftovers | `/etc/alternatives/*.dpkg-tmp` left over from the build's maintainer-script runs cause `update-alternatives` to retry the cleanup at every boot. | `build.sh::prepare_runtime` removes them before the squashfs is packed. |
 | `interfaces.new` build leftover | ifupdown's atomic-rename file from initial network config write; `pvenetcommit` would otherwise commit it on every boot. | `build.sh::prepare_runtime` removes it. |
 
-`pmxcfs` (pve-cluster) needs a non-loopback hostname → IP entry in `/etc/hosts` to start. `veyage-network-init` writes both `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot, mirroring the stock Proxmox installer's static-IP-prompt step. After first boot, `/etc/hosts` is on the persistent overlay and edited via the web UI like a normal Proxmox install.
+`pmxcfs` (pve-cluster) needs a non-loopback hostname → IP entry in `/etc/hosts` to start. `vestick-network-init` writes both `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot, mirroring the stock Proxmox installer's static-IP-prompt step. After first boot, `/etc/hosts` is on the persistent overlay and edited via the web UI like a normal Proxmox install.
 
 ## Write boundaries (operator-visible)
 
@@ -132,7 +132,7 @@ By design no monitoring is shipped in the image. The build provides the substrat
 ## Build approach
 
 - **Host:** privileged Proxmox LXC running Debian Trixie with `features: nesting=1,keyctl=1`, plus `/dev/kvm` and `/dev/loop[0-N]` + `/dev/loop-control` passed through.
-- **Pipeline:** `debootstrap --variant=minbase` → write apt sources → install packages with `--no-install-recommends` → apply overlay tree → patch overlayroot init-bottom hook → strip openssh-server's build-time host keys (regenerated on first boot via the `ssh.service` drop-in) → `update-initramfs -u -k all` → `prepare_runtime` (remove build leftovers, enable veyage units) → export kernel/initrd → `mksquashfs` → assemble GPT image (ESP, raw squashfs partition, f2fs overlay partition) → `grub-mkstandalone` BOOTX64.EFI.
+- **Pipeline:** `debootstrap --variant=minbase` → write apt sources → install packages with `--no-install-recommends` → apply overlay tree → patch overlayroot init-bottom hook → strip openssh-server's build-time host keys (regenerated on first boot via the `ssh.service` drop-in) → `update-initramfs -u -k all` → `prepare_runtime` (remove build leftovers, enable vestick units) → export kernel/initrd → `mksquashfs` → assemble GPT image (ESP, raw squashfs partition, f2fs overlay partition) → `grub-mkstandalone` BOOTX64.EFI.
 - **Two profiles** controlled by `INCLUDE_PROXMOX`:
   - `INCLUDE_PROXMOX=0` — Debian + `linux-image-amd64`, no Proxmox repo.
   - `INCLUDE_PROXMOX=1` — adds Proxmox apt repo + `proxmox-ve` metapackage + `proxmox-default-kernel`.
@@ -144,7 +144,7 @@ Skip `proxmox-boot-tool` — that's for ZFS-on-root or systemd-boot setups.
 - The repo contains build scripts and configuration only. Proxmox packages are fetched from `download.proxmox.com` at build time, never bundled.
 - Default to the `pve-no-subscription` apt repo. Document how to switch to enterprise.
 - Same approach for `non-free-firmware`: fetched from Debian's repo, not bundled.
-- Trademark: README must state this is an independent project, not endorsed by Proxmox Server Solutions GmbH. The project name "VEyage" is a homage to Voyage Linux + Proxmox VE; no Proxmox branding is used.
+- Trademark: README must state this is an independent project, not endorsed by Proxmox Server Solutions GmbH. The project name "VEstick" is a homage to Voyage Linux + Proxmox VE; no Proxmox branding is used.
 
 ## License
 

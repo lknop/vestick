@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# VEyage build — minimal Debian Trixie + Proxmox VE on a read-only root.
+# VEstick build — minimal Debian Trixie + Proxmox VE on a read-only root.
 # Run as root on an amd64 Debian/Ubuntu host. See README.md for env vars.
 
 set -euo pipefail
@@ -19,8 +19,8 @@ CHROOT="$WORK/chroot"
 PKG_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/packages"
 OVERLAY_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/overlay"
 
-log()  { printf '[VEyage] %s\n' "$*" >&2; }
-fail() { printf '[VEyage] ERROR: %s\n' "$*" >&2; exit 1; }
+log()  { printf '[VEstick] %s\n' "$*" >&2; }
+fail() { printf '[VEstick] ERROR: %s\n' "$*" >&2; exit 1; }
 
 read_pkg_list() {
     # Print packages from a list file, skipping blanks and # comments.
@@ -172,7 +172,7 @@ virtio_blk
 virtio_pci
 virtio_net
 EOF
-    chmod 0755 "$CHROOT/etc/initramfs-tools/hooks/veyage-f2fs"
+    chmod 0755 "$CHROOT/etc/initramfs-tools/hooks/vestick-f2fs"
     # Patch overlayroot's init-bottom hook: drop the `mount -o remount,ro $ROOTMNT`
     # call that fires whenever the kernel cmdline contains `ro`. Squashfs requires
     # `ro` at the kernel mount step, but the overlay we stack on top must stay rw
@@ -180,7 +180,7 @@ EOF
     # (chrony, systemd-logind, sshd-keygen all break).
     local hook="$CHROOT/usr/share/initramfs-tools/scripts/init-bottom/overlayroot"
     if [[ -f "$hook" ]] && grep -q 'remount,ro "$ROOTMNT"' "$hook"; then
-        sed -i 's|^\(\s*\)mount -o remount,ro "\$ROOTMNT"|\1: # VEyage: skip remount,ro — keep overlay rw\n\1true|' "$hook"
+        sed -i 's|^\(\s*\)mount -o remount,ro "\$ROOTMNT"|\1: # VEstick: skip remount,ro — keep overlay rw\n\1true|' "$hook"
     fi
     # No build-time SSH host keys: ssh.service has an ExecStartPre drop-in
     # that runs `ssh-keygen -A` (idempotent) before each start, so the keys
@@ -202,7 +202,7 @@ generate_initramfs() {
 }
 
 prepare_runtime() {
-    log "Preparing runtime: cleaning build leftovers, enabling veyage units"
+    log "Preparing runtime: cleaning build leftovers, enabling vestick units"
 
     # Build-time leftovers that would otherwise re-trigger work on every boot:
     #   - interfaces.new: ifupdown's atomic-rename file from the initial
@@ -212,9 +212,9 @@ prepare_runtime() {
     rm -f "$CHROOT/etc/alternatives/"*.dpkg-tmp
 
     chroot_run systemctl enable \
-        veyage-firstboot.service \
-        veyage-network-init.service \
-        veyage-overlay-resize.service 2>/dev/null || true
+        vestick-firstboot.service \
+        vestick-network-init.service \
+        vestick-overlay-resize.service 2>/dev/null || true
 }
 
 export_boot_artifacts() {
@@ -253,9 +253,9 @@ cleanup_chroot() {
     # Combined hostname.search-domain produces an FQDN > 64 chars, which
     # busts X.509 CN limits and prevents `pvecm updatecerts` from issuing
     # /etc/pve/local/pve-ssl.pem on first boot — pveproxy then can't serve
-    # https. veyage-firstboot prompts the operator for the real hostname
-    # and veyage-network-init fills resolv.conf via DHCP/static-IP setup.
-    echo veyage > "$CHROOT/etc/hostname"
+    # https. vestick-firstboot prompts the operator for the real hostname
+    # and vestick-network-init fills resolv.conf via DHCP/static-IP setup.
+    echo vestick > "$CHROOT/etc/hostname"
     : > "$CHROOT/etc/resolv.conf"
 
     umount_chroot
@@ -279,12 +279,12 @@ pack_squashfs() {
 }
 
 build_image() {
-    local img="$OUT/veyage.img"
+    local img="$OUT/vestick.img"
     local squashfs="$OUT/rootfs.squashfs"
     [[ -f "$squashfs" ]] || fail "Missing squashfs at $squashfs"
     [[ -f "$OUT/vmlinuz" && -f "$OUT/initrd.img" ]] || fail "Missing kernel/initrd in $OUT"
 
-    # overlay_mb is just the image's initial size. veyage-overlay-resize
+    # overlay_mb is just the image's initial size. vestick-overlay-resize
     # grows it on first boot via growpart + resize.f2fs, so we ship a small
     # image and let it expand on whatever USB/SD it's dd'd to.
     local squash_size_mb esp_mb=128 overlay_mb=256 total_mb
@@ -351,7 +351,7 @@ set default=0
 # /boot/vmlinuz and /boot/initrd.img before loading them.
 search --no-floppy --label EFI --set=root
 
-menuentry 'VEyage' {
+menuentry 'VEstick' {
     linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro console=ttyS0 console=tty0 panic=10
     initrd /boot/initrd.img
 }

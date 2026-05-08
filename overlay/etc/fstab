@@ -1,4 +1,4 @@
-# VEyage fstab. Root is mounted by initramfs via overlayroot (squashfs lower
+# VEstick fstab. Root is mounted by initramfs via overlayroot (squashfs lower
 # + f2fs upper); the ESP is mounted on demand by update-grub. The entries
 # below route paths whose contents are continuously written and regenerable
 # (logs, caches, perf RRDs) to RAM, so the f2fs overlay sees only writes

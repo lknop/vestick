@@ -1,6 +1,6 @@
 [Unit]
-Description=VEyage first-boot network setup (interactive)
-After=veyage-firstboot.service
+Description=VEstick first-boot network setup (interactive)
+After=vestick-firstboot.service
 Before=networking.service getty.target
 
 [Service]
@@ -13,7 +13,7 @@ TTYPath=/dev/console
 TTYReset=yes
 TTYVHangup=yes
 TimeoutStartSec=infinity
-ExecStart=/usr/local/sbin/veyage-network-init
+ExecStart=/usr/local/sbin/vestick-network-init
 
 [Install]
 WantedBy=networking.service

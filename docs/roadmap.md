@@ -1,4 +1,4 @@
-# VEyage roadmap
+# VEstick roadmap
 
 Phase-by-phase plan with current status. Update **after** each milestone is committed.
 
@@ -23,11 +23,11 @@ Adds `linux-image-amd64`, `systemd-sysv`, `dbus`, `overlayroot`, `e2fsprogs`, `f
 
 ## Phase 3 — UEFI disk image
 
-`build.sh::build_image` produces `out/veyage.img`: GPT with ESP + raw squashfs partition + f2fs overlay partition. Self-contained `BOOTX64.EFI` built via `grub-mkstandalone`. `MODE=image ./test-vm.sh` (default) boots via OVMF.
+`build.sh::build_image` produces `out/vestick.img`: GPT with ESP + raw squashfs partition + f2fs overlay partition. Self-contained `BOOTX64.EFI` built via `grub-mkstandalone`. `MODE=image ./test-vm.sh` (default) boots via OVMF.
 
 ## Phase 4 — Persistent overlay + first-boot resize + tmpfs volatile
 
-The f2fs partition created in Phase 3 is wired as the overlayfs upper layer (via `overlayroot.conf` `device:dev=LABEL=overlay,fstype=f2fs,mkfs=1`). All persistent writes — config edits, `apt install`, package state, `/etc/network/`, SSH host keys, `/var/lib/pve-cluster/` — land there automatically. `veyage-overlay-resize.service` runs once on first boot to grow the overlay partition + filesystem to fill the actual device. A small curated tmpfs list (`/etc/fstab` in the overlay tree) keeps continuously-rewritten regenerable paths in RAM (`/var/log`, `/var/cache`, `/var/lib/rrdcached`, etc.).
+The f2fs partition created in Phase 3 is wired as the overlayfs upper layer (via `overlayroot.conf` `device:dev=LABEL=overlay,fstype=f2fs,mkfs=1`). All persistent writes — config edits, `apt install`, package state, `/etc/network/`, SSH host keys, `/var/lib/pve-cluster/` — land there automatically. `vestick-overlay-resize.service` runs once on first boot to grow the overlay partition + filesystem to fill the actual device. A small curated tmpfs list (`/etc/fstab` in the overlay tree) keeps continuously-rewritten regenerable paths in RAM (`/var/log`, `/var/cache`, `/var/lib/rrdcached`, etc.).
 
 **Acceptance:** boot the image → `df` shows the overlay grown to fill the device → reboot → SSH host key fingerprint is the same on second boot.
 
@@ -41,7 +41,7 @@ The f2fs partition created in Phase 3 is wired as the overlayfs upper layer (via
 
 1. `configure_apt`: Proxmox apt repo (`download.proxmox.com/debian/pve trixie pve-no-subscription`) and the GPG signing key. Repo URL and key are fetched at build time, never bundled.
 2. `install_packages`: `proxmox.list` adds `proxmox-ve`, `proxmox-default-kernel` (replaces `linux-image-amd64`), `lvm2`, `thin-provisioning-tools`, `open-iscsi`, `postfix`.
-3. First-boot wizards: `veyage-firstboot` (hostname + root password), `veyage-network-init` (NIC + static IP/CIDR + gateway + DNS, writes `/etc/network/interfaces` and `/etc/hosts` together — same shape as the stock Proxmox installer's network step).
+3. First-boot wizards: `vestick-firstboot` (hostname + root password), `vestick-network-init` (NIC + static IP/CIDR + gateway + DNS, writes `/etc/network/interfaces` and `/etc/hosts` together — same shape as the stock Proxmox installer's network step).
 4. SSH host keys: generated on first boot via `ssh.service` ExecStartPre (`ssh-keygen -A`, idempotent); persist on the f2fs overlay.
 5. Verify: boot the image, log in, `pvesh get /version` returns sane data, `https://<ip>:8006` shows the web UI, second boot retains the configured hostname/password/network and unique SSH host keys.
 
@@ -54,7 +54,7 @@ The f2fs partition created in Phase 3 is wired as the overlayfs upper layer (via
 **Goal:** confirm the image boots on real hardware (not just QEMU).
 
 **Sub-tasks:**
-1. Document `dd if=out/veyage.img of=/dev/sdX bs=4M status=progress conv=fsync` for write to USB.
+1. Document `dd if=out/vestick.img of=/dev/sdX bs=4M status=progress conv=fsync` for write to USB.
 2. Boot a physical machine from the USB; verify overlay-partition resize fires; verify Proxmox web UI reachable.
 3. Document hardware caveats (UEFI Secure Boot — we don't sign GRUB, so SB must be off).
 
@@ -70,13 +70,13 @@ After Proxmox is up, the squashfs will be ~700 MB. Trimming opportunities:
 
 ## Phase 8 — CI / GitHub Actions
 
-**Goal:** every push triggers a from-scratch build on a clean amd64 runner; the produced `veyage.img` becomes a release artifact.
+**Goal:** every push triggers a from-scratch build on a clean amd64 runner; the produced `vestick.img` becomes a release artifact.
 
 **Sub-tasks:**
 1. `.github/workflows/build.yml` using the `ubuntu-24.04` runner.
 2. Enable nested virtualization for KVM-accelerated test boot (or accept TCG slowness).
 3. Run `./test-vm.sh` to verify the produced image at least reaches the login prompt.
-4. Publish `out/veyage.img` and `SHA256SUMS` to a GitHub Release on tagged commits.
+4. Publish `out/vestick.img` and `SHA256SUMS` to a GitHub Release on tagged commits.
 5. Publish `INCLUDE_PROXMOX=1` and `INCLUDE_PROXMOX=0` variants separately.
 
 ## Cross-cutting backlog (any phase)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Boot the VEyage image in QEMU. Two modes:
-#   MODE=image (default): boot the assembled disk image via GRUB (./out/veyage.img)
+# Boot the VEstick image in QEMU. Two modes:
+#   MODE=image (default): boot the assembled disk image via GRUB (./out/vestick.img)
 #   MODE=direct:          direct kernel boot (./out/{vmlinuz,initrd.img,rootfs.squashfs})
 # Requires qemu-system-x86_64. Console comes to your terminal; quit with Ctrl-A x.
 
@@ -20,7 +20,7 @@ fi
 
 case "$MODE" in
     image)
-        IMG="${IMG:-$OUT/veyage.img}"
+        IMG="${IMG:-$OUT/vestick.img}"
         [[ -f "$IMG" ]] || { echo "Missing $IMG — run ./build.sh first" >&2; exit 1; }
         # UEFI firmware: split CODE (read-only) + VARS (writable copy per run).
         OVMF_CODE="${OVMF_CODE:-/usr/share/OVMF/OVMF_CODE_4M.fd}"

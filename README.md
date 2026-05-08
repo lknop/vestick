@@ -1,4 +1,4 @@
-# VEyage
+# VEstick
 
 Minimal Debian Trixie image with a read-only base filesystem, designed as a Proxmox VE appliance for USB stick or SD card.
 
@@ -14,9 +14,9 @@ A small, opinionated build pipeline that produces a Debian 13 (Trixie) image wit
 
 ## What this is not
 
-VEyage is an **independent project**. It is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH. This repository contains build scripts and configuration only — Proxmox packages are downloaded from the Proxmox apt repository during the build, not redistributed here.
+VEstick is an **independent project**. It is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH. This repository contains build scripts and configuration only — Proxmox packages are downloaded from the Proxmox apt repository during the build, not redistributed here.
 
-The name "VEyage" is a nod to the long-defunct [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) project, which inspired the read-only-root and curated-package approach. No Voyage code is used.
+The name "VEstick" is a nod to the long-defunct [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) project, which inspired the read-only-root and curated-package approach. No Voyage code is used.
 
 ## Architecture at a glance
 
@@ -45,7 +45,7 @@ sudo INCLUDE_PROXMOX=0 ./build.sh    # Debian-only, boots cleanly today
 ./test-vm.sh                         # Boots the disk image in QEMU under UEFI
 ```
 
-`./test-vm.sh` defaults to `MODE=image` (full UEFI boot of `out/veyage.img`). `MODE=direct` skips GRUB and uses QEMU's `-kernel` / `-initrd` against `out/rootfs.squashfs` for faster iteration.
+`./test-vm.sh` defaults to `MODE=image` (full UEFI boot of `out/vestick.img`). `MODE=direct` skips GRUB and uses QEMU's `-kernel` / `-initrd` against `out/rootfs.squashfs` for faster iteration.
 
 Environment variables:
 
@@ -61,14 +61,14 @@ Environment variables:
 
 ## Prebuilt images
 
-Every push to `main` and every PR triggers `.github/workflows/build.yml`, which builds both the Debian-only and the `INCLUDE_PROXMOX=1` variants on a fresh `ubuntu-24.04` runner and uploads the resulting `veyage-debian.img` and `veyage-pve.img` (plus matching `.sha256` files) as workflow artifacts (14-day retention).
+Every push to `main` and every PR triggers `.github/workflows/build.yml`, which builds both the Debian-only and the `INCLUDE_PROXMOX=1` variants on a fresh `ubuntu-24.04` runner and uploads the resulting `vestick-debian.img` and `vestick-pve.img` (plus matching `.sha256` files) as workflow artifacts (14-day retention).
 
 Pushing a tag (`v*`) additionally creates a GitHub Release with both images attached, no per-file size limit aside from GitHub's 2 GB cap. Useful for `dd`-to-USB without setting up a build host:
 
 ```sh
-gh release download vX.Y.Z --pattern 'veyage-pve.img*'
-sha256sum -c veyage-pve.img.sha256
-sudo dd if=veyage-pve.img of=/dev/sdX bs=4M status=progress conv=fsync
+gh release download vX.Y.Z --pattern 'vestick-pve.img*'
+sha256sum -c vestick-pve.img.sha256
+sudo dd if=vestick-pve.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ## Logging shipper choice
@@ -98,16 +98,16 @@ packages/                  Package lists (one per line, `#` for comments)
 overlay/                   Files merged into chroot before squashing
   etc/systemd/journald.conf.d/volatile.conf
   etc/overlayroot.conf
-  usr/local/bin/veyage-diag  Boot-time mount-topology dump (init=… debug)
+  usr/local/bin/vestick-diag  Boot-time mount-topology dump (init=… debug)
 out/                       Build artifacts (gitignored)
   rootfs.squashfs          The read-only root layer
   vmlinuz, initrd.img      Extracted from the chroot for direct kernel boot
-  veyage.img               Bootable UEFI disk image (GPT: ESP + rootfs + overlay)
+  vestick.img               Bootable UEFI disk image (GPT: ESP + rootfs + overlay)
 ```
 
 ## Disk image layout
 
-The `veyage.img` produced by `build.sh` is GPT-partitioned for UEFI:
+The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 
 | # | Type | Size | Notes |
 |---|---|---|---|

@@ -52,18 +52,18 @@ jobs:
 
       - name: Stage artifacts
         run: |
-          mv out/veyage.img veyage-${{ matrix.flavor }}.img
-          sha256sum veyage-${{ matrix.flavor }}.img \
-            > veyage-${{ matrix.flavor }}.img.sha256
-          ls -lh veyage-${{ matrix.flavor }}.img*
+          mv out/vestick.img vestick-${{ matrix.flavor }}.img
+          sha256sum vestick-${{ matrix.flavor }}.img \
+            > vestick-${{ matrix.flavor }}.img.sha256
+          ls -lh vestick-${{ matrix.flavor }}.img*
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: veyage-${{ matrix.flavor }}
+          name: vestick-${{ matrix.flavor }}
           path: |
-            veyage-${{ matrix.flavor }}.img
-            veyage-${{ matrix.flavor }}.img.sha256
+            vestick-${{ matrix.flavor }}.img
+            vestick-${{ matrix.flavor }}.img.sha256
           retention-days: 14
           if-no-files-found: error
 
@@ -93,5 +93,5 @@ jobs:
           gh release upload "$GITHUB_REF_NAME" \
             --repo "$GITHUB_REPOSITORY" \
             --clobber \
-            artifacts/veyage-*.img \
-            artifacts/veyage-*.img.sha256
+            artifacts/vestick-*.img \
+            artifacts/vestick-*.img.sha256
