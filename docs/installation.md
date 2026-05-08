@@ -50,13 +50,18 @@ Insert the device into the target machine, set UEFI boot order to it. BIOS-only 
 
 ## First boot
 
-Three interactive console prompts run in order; respond at the local console (HDMI or serial, whichever is `/dev/console`):
+One interactive console wizard (`vestick-firstboot`) runs at the local console (HDMI or serial, whichever is `/dev/console`) and prompts for:
 
-1. **`vestick-firstboot`** — system hostname, root password.
-2. **`vestick-network-init`** — pick the management NIC, enter static IP/CIDR, gateway, DNS. Writes `/etc/network/interfaces` (vmbr0 over the chosen NIC) and `/etc/hosts` together.
-3. **(implicit)** — `vestick-sshkeys.service` runs at sysinit, generates per-host SSH keys before networking and sshd come up.
+1. System hostname.
+2. Root password (twice).
+3. Management NIC.
+4. Static IP/CIDR, gateway, DNS nameserver.
 
-When the wizards complete, networking comes up, ssh starts on port 22, the Proxmox web UI is reachable at `https://<your-ip>:8006/`. Default user is `root` with the password you set in step 1.
+It writes `/etc/hostname`, root's `/etc/shadow` entry, `/etc/network/interfaces` (vmbr0 over the chosen NIC) and `/etc/hosts` together.
+
+Separately, `vestick-sshkeys.service` runs at `sysinit.target` and generates per-host SSH keys before networking and sshd come up — no operator interaction required.
+
+When the wizard completes, networking comes up, ssh starts on port 22, the Proxmox web UI is reachable at `https://<your-ip>:8006/`. Default user is `root` with the password you set.
 
 ## Subsequent boots
 
@@ -70,6 +75,6 @@ All wizards are gated by marker files in `/var/lib/vestick/`, so they don't re-r
 
 **Web UI returns nothing / connection drops.** Check `journalctl -u pveproxy -n 50` for `unable to open log file '/var/log/pveproxy/access.log'` (the directory is recreated on every boot via `tmpfiles.d`; if missing, `mkdir -p /var/log/pveproxy && chown www-data:www-data /var/log/pveproxy && systemctl restart pveproxy`).
 
-**Web UI works locally (`curl https://localhost:8006/`) but not over the network.** Check that `vestick-network-init` actually completed (`cat /etc/network/interfaces` should have `auto vmbr0`); check that `pveproxy` isn't restricted via `/etc/default/pveproxy`'s `ALLOW_FROM`.
+**Web UI works locally (`curl https://localhost:8006/`) but not over the network.** Check that `vestick-firstboot` actually completed the network step (`cat /etc/network/interfaces` should have `auto vmbr0`); check that `pveproxy` isn't restricted via `/etc/default/pveproxy`'s `ALLOW_FROM`.
 
 **Partition didn't grow.** Check `systemctl status vestick-overlay-resize` and `df -h /media/root-rw`. If the marker is set and the overlay is small, you may have hit the "skip when at disk end" short-circuit (see the script). If genuinely undersized, delete `/var/lib/vestick/.overlay-resized` and reboot — the service will retry.

@@ -108,7 +108,7 @@ The overlay ships small; `vestick-overlay-resize.service` runs once on first boo
 | `update-alternatives` build leftovers | `/etc/alternatives/*.dpkg-tmp` left over from the build's maintainer-script runs cause `update-alternatives` to retry the cleanup at every boot. | `build.sh::prepare_runtime` removes them before the squashfs is packed. |
 | `interfaces.new` build leftover | ifupdown's atomic-rename file from initial network config write; `pvenetcommit` would otherwise commit it on every boot. | `build.sh::prepare_runtime` removes it. |
 
-`pmxcfs` needs a non-loopback hostname → IP in `/etc/hosts`. `vestick-network-init` writes `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot — same as the stock Proxmox installer. Subsequent edits go through the web UI.
+`pmxcfs` needs a non-loopback hostname → IP in `/etc/hosts`. `vestick-firstboot` writes `/etc/network/interfaces` (static IP) and `/etc/hosts` together at first boot — same as the stock Proxmox installer. Subsequent edits go through the web UI.
 
 ## Write boundaries (operator-visible)
 

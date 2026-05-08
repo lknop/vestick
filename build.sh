@@ -213,7 +213,6 @@ prepare_runtime() {
 
     chroot_run systemctl enable \
         vestick-firstboot.service \
-        vestick-network-init.service \
         vestick-overlay-resize.service 2>/dev/null || true
 }
 
@@ -254,7 +253,8 @@ cleanup_chroot() {
     # busts X.509 CN limits and prevents `pvecm updatecerts` from issuing
     # /etc/pve/local/pve-ssl.pem on first boot — pveproxy then can't serve
     # https. vestick-firstboot prompts the operator for the real hostname
-    # and vestick-network-init fills resolv.conf via DHCP/static-IP setup.
+    # and writes /etc/hosts; resolv.conf is filled at runtime by ifupdown
+    # from the static-IP setup.
     echo vestick > "$CHROOT/etc/hostname"
     : > "$CHROOT/etc/resolv.conf"
 
