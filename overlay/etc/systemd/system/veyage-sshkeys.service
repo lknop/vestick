@@ -1,0 +1,26 @@
+# Generate SSH host keys at sysinit, well before ssh.service / ssh.socket
+# come up. ssh-keygen -A is idempotent — only creates the keys that don't
+# exist, so it runs the heavy work once on first boot, no-op forever after.
+# /etc/ssh sits on the persistent f2fs overlay, so the keys persist.
+#
+# Doing this here (as opposed to ssh.service ExecStartPre) avoids two
+# pitfalls: (a) socket-activated ssh wouldn't generate keys until the
+# first connection — and the connecting client might have already timed
+# out by then; (b) the stock ssh.service has its own ExecStartPre=`sshd
+# -t` config test, and on some versions that fails when keys are missing,
+# preventing any later ExecStartPre from ever running.
+
+[Unit]
+Description=Generate SSH host keys on first boot if missing
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target shutdown.target ssh.service ssh.socket
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/ssh-keygen -A
+RemainAfterExit=yes
+
+[Install]
+WantedBy=sysinit.target
