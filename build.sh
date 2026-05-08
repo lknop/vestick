@@ -267,14 +267,17 @@ pack_squashfs() {
     # Exclude POSIX ACL xattrs (squashfs can't represent them, warns noisily)
     # while preserving security.capability so setcap'd binaries (e.g. ping) keep working.
     # Exclude *contents* of /dev /proc /sys but keep the directories themselves
-    # (initramfs needs them as mount points for devtmpfs/procfs/sysfs at boot):
-    # cleanup_chroot uses `umount -Rl` (needed because LXC's /dev/.lxc/sys
-    # resists clean unmount), which can leave bind-mount contents visible to
-    # mksquashfs and slow it down enormously while it tries to read
-    # /proc/kcore, /dev/.lxc/proc/* etc.
-    mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -noappend -no-progress \
+    # (initramfs needs them as mount points for devtmpfs/procfs/sysfs at boot).
+    # Also explicitly exclude dev/.lxc: `umount -Rl` can't cleanly unmount the
+    # LXC-passed-through /dev/.lxc/sys, leaving live proc-like files (including
+    # kcore, a 128TB virtual file) visible. mksquashfs blocks reading kcore and
+    # deadlocks. Unmount inside an unshared private mount namespace so the
+    # operation doesn't propagate back to the host's /dev and break /dev/pts.
+    unshare --mount -- bash -c "umount -Rl '$CHROOT/dev/.lxc' 2>/dev/null; true"
+    mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -Xcompression-level 15 \
+        -noappend -no-progress \
         -xattrs-exclude '^system\.posix_acl_' \
-        -wildcards -e 'dev/*' 'proc/*' 'sys/*'
+        -wildcards -e 'dev/*' 'dev/.lxc' 'proc/*' 'sys/*'
     ls -lh "$OUT/rootfs.squashfs"
 }
 
