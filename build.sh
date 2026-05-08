@@ -244,19 +244,12 @@ cleanup_chroot() {
     # runs ssh-keygen -A as ExecStartPre, generating fresh per-host keys
     # on first boot. They persist on the f2fs overlay.
 
-    # Sanitize build-host leakage. Without these, debootstrap-inherited values
-    # from the build host land in the squashfs:
-    #   - /etc/hostname: the GHA runner's hostname (e.g. runnervmeorf1)
-    #   - /etc/resolv.conf: the build host's DNS search domain (Azure GHA
-    #     runners get vivxw…cloudapp.net, ~50 chars)
-    # Combined hostname.search-domain produces an FQDN > 64 chars, which
-    # busts X.509 CN limits and prevents `pvecm updatecerts` from issuing
-    # /etc/pve/local/pve-ssl.pem on first boot — pveproxy then can't serve
-    # https. vestick-firstboot prompts the operator for the real hostname
-    # and writes /etc/hosts; resolv.conf is filled at runtime by ifupdown
-    # from the static-IP setup.
+    # Without this, debootstrap inherits the GHA runner's hostname (e.g.
+    # runnervmeorf1) into the squashfs. Combined with a build-host DNS search
+    # domain, the resulting FQDN can exceed 64 chars and bust X.509 CN limits,
+    # blocking `pvecm updatecerts` from issuing /etc/pve/local/pve-ssl.pem
+    # on first boot. vestick-firstboot prompts the operator for the real one.
     echo vestick > "$CHROOT/etc/hostname"
-    : > "$CHROOT/etc/resolv.conf"
 
     umount_chroot
 }

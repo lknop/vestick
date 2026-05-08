@@ -47,6 +47,24 @@ ethtool
 iproute2
 iputils-ping
 
+# DNS resolver glue — without this, the `dns-nameservers` line in
+# /etc/network/interfaces is silently ignored and /etc/resolv.conf stays
+# empty after `ifup vmbr0`. resolvconf's ifupdown hook populates
+# /etc/resolv.conf on every interface up/down, so DNS survives later
+# edits via the Proxmox web UI.
+resolvconf
+
+# DNS debugging tools (dig, host, nslookup). Operators expect these on
+# anything that bills itself as a network appliance; small enough to ship.
+bind9-dnsutils
+
+# CPU microcode updates. Both vendors are listed unconditionally because
+# the same image can land on either Intel or AMD silicon; the dpkg
+# postinst on the wrong vendor is a no-op. Both live in non-free-firmware,
+# already enabled in sources.list.
+intel-microcode
+amd64-microcode
+
 # Remote access
 openssh-server
 
