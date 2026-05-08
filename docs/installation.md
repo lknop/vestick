@@ -14,7 +14,7 @@ sudo INCLUDE_PROXMOX=1 ./build.sh   # output: out/vestick.img
 
 ## Flash
 
-**macOS / Windows:** use [balenaEtcher](https://etcher.balena.io/).
+**macOS / Windows:** use [balenaEtcher](https://etcher.balena.io/) or a similar image writing tool.
 
 **Linux:**
 ```sh
