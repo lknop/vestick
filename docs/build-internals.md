@@ -55,6 +55,22 @@ The container's kernel won't expose partition device nodes for loop devices, eve
 
 `kpartx -a /dev/loop0` fails with `/dev/mapper/control: open failed: Operation not permitted`. So the alternative `kpartx`-based partition-mapping approach is also out.
 
+### 2a. After LXC restart, passthrough device nodes come back as empty regular files
+
+After rebooting (or restarting) the LXC, `/dev/loop[0-9]` and `/dev/kvm` may show up as empty regular files (`-rw-rw---- 0 bytes`) instead of block / character device nodes. The host's device passthrough wasn't reattached. Symptoms:
+
+- `losetup` fails with `Inappropriate ioctl for device`
+- `qemu -enable-kvm` fails with `failed to initialize kvm: Inappropriate ioctl for device`
+
+Recovery (run on the LXC as root):
+```
+for i in 0 1 2 3 4 5 6 7; do rm -f /dev/loop$i; mknod /dev/loop$i b 7 $i; chmod 660 /dev/loop$i; done
+rm -f /dev/loop-control; mknod /dev/loop-control c 10 237; chmod 660 /dev/loop-control
+rm -f /dev/kvm; mknod /dev/kvm c 10 232; chmod 666 /dev/kvm
+```
+
+The right *durable* fix is on the Proxmox host running the LXC: ensure the device-passthrough rules survive container restart. Until then, this snippet recovers a working build environment in seconds.
+
 ### 3. `/dev` mishaps from recursive bind + umount
 
 When the build chroot's `/dev` is bound from the LXC's `/dev` (`mount --rbind /dev`) and later `umount`d, the operation can damage the LXC's *own* `/dev`. After this, `/dev/fd` (a symlink to `/proc/self/fd`) and `/dev/pts` go missing on the host LXC. Symptoms:

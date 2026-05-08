@@ -247,8 +247,15 @@ pack_squashfs() {
     rm -f "$OUT/rootfs.squashfs"
     # Exclude POSIX ACL xattrs (squashfs can't represent them, warns noisily)
     # while preserving security.capability so setcap'd binaries (e.g. ping) keep working.
+    # Exclude *contents* of /dev /proc /sys but keep the directories themselves
+    # (initramfs needs them as mount points for devtmpfs/procfs/sysfs at boot):
+    # cleanup_chroot uses `umount -Rl` (needed because LXC's /dev/.lxc/sys
+    # resists clean unmount), which can leave bind-mount contents visible to
+    # mksquashfs and slow it down enormously while it tries to read
+    # /proc/kcore, /dev/.lxc/proc/* etc.
     mksquashfs "$CHROOT" "$OUT/rootfs.squashfs" -comp zstd -noappend -no-progress \
-        -xattrs-exclude '^system\.posix_acl_'
+        -xattrs-exclude '^system\.posix_acl_' \
+        -wildcards -e 'dev/*' 'proc/*' 'sys/*'
     ls -lh "$OUT/rootfs.squashfs"
 }
 
