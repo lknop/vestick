@@ -343,7 +343,7 @@ build_image() {
     local tmp_cfg
     tmp_cfg=$(mktemp)
     cat > "$tmp_cfg" <<EOF
-set timeout=2
+set timeout=3
 set default=0
 
 # grub-mkstandalone bakes this config into a memdisk, so GRUB's root starts
@@ -351,7 +351,19 @@ set default=0
 # /boot/vmlinuz and /boot/initrd.img before loading them.
 search --no-floppy --label EFI --set=root
 
+# Default: quiet boot. quiet + loglevel=3 suppress kernel printk;
+# systemd.show_status=auto makes systemd respect 'quiet' and skip the
+# per-unit status spam to /dev/console — so the first-boot wizards land
+# on a clean screen instead of being interleaved with kernel/init noise.
 menuentry 'VEstick' {
+    linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro quiet loglevel=3 systemd.show_status=auto console=ttyS0 console=tty0 panic=10
+    initrd /boot/initrd.img
+}
+
+# Verbose boot: same config, kernel/systemd output left on. Pick this
+# from the GRUB menu when something goes wrong on first boot and you
+# need to see what the kernel and systemd are doing.
+menuentry 'VEstick (verbose boot)' {
     linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro console=ttyS0 console=tty0 panic=10
     initrd /boot/initrd.img
 }

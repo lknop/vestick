@@ -83,9 +83,9 @@ Squashfs requires `ro` on the kernel cmdline. The unpatched hook then propagates
 overlayroot="device:dev=LABEL=overlay"
 ```
 
-`build.sh::build_image` formats the partition with `mkfs.f2fs -l overlay` at build time. overlayroot's `device:` mode just mounts what it finds; it does **not** run mkfs at runtime (`fstype=` and `mkfs=` are options for the `crypt:` mode, silently ignored in `device:`). If the f2fs gets corrupted, first boot fails — recovery is `mkfs.f2fs -l overlay /dev/disk/by-partlabel/overlay` from a Linux host, or re-flashing.
+`build.sh::build_image` formats the partition with `mkfs.f2fs -l overlay` at build time; overlayroot just mounts what it finds. If the f2fs gets corrupted, first boot fails — recovery is `mkfs.f2fs -l overlay /dev/disk/by-partlabel/overlay` from a Linux host, or re-flashing.
 
-`f2fs-tools` must be installed in the chroot before `update-initramfs` so the initramfs has `f2fs.ko` and `fsck.f2fs` available for boot-time mount + recovery.
+`f2fs-tools` must be installed in the chroot before `update-initramfs` so the initramfs has `f2fs.ko` and `fsck.f2fs`.
 
 ## Disk image layout
 

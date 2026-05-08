@@ -1,6 +1,6 @@
 [Unit]
-Description=VEstick first-boot identity setup (interactive: SSH keys + hostname + root password)
-Before=vestick-network-init.service networking.service getty.target
+Description=VEstick first-boot setup wizard (hostname, root password, network)
+Before=networking.service getty.target
 ConditionPathExists=!/var/lib/vestick/.firstboot-done
 
 [Service]
