@@ -141,10 +141,10 @@ Skip `proxmox-boot-tool` — that's for ZFS-on-root or systemd-boot setups.
 
 ## Distribution stance
 
-- The repo contains build scripts and configuration only. Proxmox packages are fetched from `download.proxmox.com` at build time, never bundled.
+- The repo contains build scripts and configuration only — no Proxmox packages are checked into git. The build fetches them from `download.proxmox.com` and bakes them into the image artifact.
 - Default to the `pve-no-subscription` apt repo. Document how to switch to enterprise.
-- Same approach for `non-free-firmware`: fetched from Debian's repo, not bundled.
-- Trademark: README must state this is an independent project, not endorsed by Proxmox Server Solutions GmbH. The project name "VEstick" is a homage to Voyage Linux + Proxmox VE; no Proxmox branding is used.
+- Same for `non-free-firmware`: fetched from Debian's repo, not in git, included in the image artifact.
+- Trademark: README must state this is an independent project, not endorsed by Proxmox Server Solutions GmbH. No Proxmox branding is used in the project name or assets.
 
 ## License
 

@@ -9,14 +9,16 @@ A small, opinionated build pipeline that produces a Debian 13 (Trixie) image wit
 - **Read-only squashfs base + persistent f2fs overlay** — the read-only base layer is never modified at runtime; all writes (config edits, `apt install`, package state) land in a flash-friendly f2fs upper layer that captures exactly the diff from the shipped image.
 - **Tmpfs for chatty paths** — logs, caches, perf graphs, and similar regenerable state route to RAM so flash takes only the writes that actually need to persist.
 - **Curated minimal package set** — `debootstrap --variant=minbase` plus a hand-picked list, installed with `--no-install-recommends`. No `man-db`, no `cron`, no `os-prober`, no `popularity-contest`.
-- **Proxmox VE on top** — fetched from the Proxmox `pve-no-subscription` apt repository at build time (not bundled in this repo).
+- **Proxmox VE on top** — fetched from the Proxmox `pve-no-subscription` apt repository at build time. No Proxmox packages are checked into this repo; the build pulls them and bakes them into the image.
 - **Remote logging by default** — `journald` runs with `Storage=volatile`; logs leave the box via a build-time-selectable shipper (rsyslog forwarding, `systemd-journal-upload`, or Fluent Bit).
 
 ## What this is not
 
-VEstick is an **independent project**. It is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH. This repository contains build scripts and configuration only — Proxmox packages are downloaded from the Proxmox apt repository during the build, not redistributed here.
+VEstick is an **independent project**. It is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH.
 
-The name "VEstick" is a nod to the long-defunct [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) project, which inspired the read-only-root and curated-package approach. No Voyage code is used.
+This repository contains build scripts and configuration only — no Proxmox packages are checked into git. Built image artifacts (the `.img` files produced by `build.sh` or downloaded from a Release) do contain Proxmox packages, fetched from the Proxmox apt repository during the build.
+
+The read-only-root + curated-package approach is inspired by [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) (long-defunct). No Voyage code is used.
 
 ## Architecture at a glance
 
