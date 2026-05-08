@@ -150,7 +150,12 @@ install_packages() {
 
 apply_overlay() {
     log "Applying rootfs overlay from $OVERLAY_DIR"
-    rsync -a "$OVERLAY_DIR/" "$CHROOT/"
+    # --chown=root:root: when overlay/ is rsync'd from a macOS source the files
+    # carry the host user's uid (501) and group (staff). Without the override,
+    # rsync -a preserves those uid/gid into the chroot, /etc ends up owned
+    # 501:staff in the squashfs, and sshd's StrictModes then refuses key auth
+    # ("bad ownership or modes for directory /etc"), among other breakages.
+    rsync -a --chown=root:root "$OVERLAY_DIR/" "$CHROOT/"
     # TODO: apply $LOG_SHIPPER-specific overlay (overlay-$LOG_SHIPPER/) if present
 }
 
@@ -239,6 +244,20 @@ cleanup_chroot() {
     # SSH host keys: not shipped in the image. The ssh.service drop-in
     # runs ssh-keygen -A as ExecStartPre, generating fresh per-host keys
     # on first boot. They persist on the f2fs overlay.
+
+    # Sanitize build-host leakage. Without these, debootstrap-inherited values
+    # from the build host land in the squashfs:
+    #   - /etc/hostname: the GHA runner's hostname (e.g. runnervmeorf1)
+    #   - /etc/resolv.conf: the build host's DNS search domain (Azure GHA
+    #     runners get vivxw…cloudapp.net, ~50 chars)
+    # Combined hostname.search-domain produces an FQDN > 64 chars, which
+    # busts X.509 CN limits and prevents `pvecm updatecerts` from issuing
+    # /etc/pve/local/pve-ssl.pem on first boot — pveproxy then can't serve
+    # https. veyage-firstboot prompts the operator for the real hostname
+    # and veyage-network-init fills resolv.conf via DHCP/static-IP setup.
+    echo veyage > "$CHROOT/etc/hostname"
+    : > "$CHROOT/etc/resolv.conf"
+
     umount_chroot
 }
 

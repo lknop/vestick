@@ -9,6 +9,22 @@ proxmox-ve
 lvm2
 thin-provisioning-tools
 open-iscsi
+# ZFS userland (zfs/zpool); kernel module ships in proxmox-default-kernel.
+zfsutils-linux
+# NFS / CIFS (SMB) client userland for PVE storage of those types.
+nfs-common
+cifs-utils
+
+# Hardware
+# Non-free firmware blobs for NICs / Wi-Fi etc. — common reason a fresh
+# PVE install has no working network interface. Recommends-only on
+# proxmox-default-kernel so --no-install-recommends drops it.
+pve-firmware
+# SMART disk health (web UI shows it when smartctl is present).
+smartmontools
+
+# KSM tuning — meaningful when overcommitting RAM across VMs.
+ksmtuned
 
 # Mail relay (Proxmox-recommended for cluster/notification mail).
 # Drop or replace if you don't need outgoing mail.
