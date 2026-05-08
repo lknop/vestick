@@ -9,16 +9,16 @@ A build pipeline that produces a Debian 13 (Trixie) image with:
 - **Squashfs base + f2fs overlay** — base is never modified at runtime; writes (config edits, `apt install`, package state) land in the f2fs upper layer, which is exactly the diff from the shipped image.
 - **Tmpfs for chatty paths** — logs, caches, perf graphs, and similar regenerable state in RAM.
 - **Minimal package set** — `debootstrap --variant=minbase` + a hand-picked list, `--no-install-recommends`. No `man-db`, `cron`, `os-prober`, `popularity-contest`.
-- **Proxmox VE on top** — fetched from the `pve-no-subscription` repo at build time. No Proxmox packages in this repo; the build pulls them and bakes them into the image.
+- **Proxmox VE on top** — fetched from the `pve-no-subscription` repo at build time. 
 - **Remote logging by default** — `journald Storage=volatile`, off-box via a build-time-selectable shipper (rsyslog, `systemd-journal-upload`, or Fluent Bit).
 
 ## What this is not
 
 VEstick is an **independent project**, not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH.
 
-This repository contains build scripts and configuration only — no Proxmox packages are checked into git. The image artifacts (`.img` files produced by `build.sh` or attached to Releases) do contain Proxmox packages, fetched from the Proxmox apt repository during the build.
+This repository contains build scripts and configuration only.
 
-Read-only-root + curated-package approach inspired by [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) (long-defunct). No Voyage code is used.
+Read-only-root debian + curated-package approach inspired by [Voyage Linux](http://linux.voyage.hk/) (long-defunct). No voyage code was used. The actual implementation modeled after openwrt (squashfs root + f2fs overlay).
 
 ## Architecture at a glance
 
@@ -30,13 +30,13 @@ Read-only-root + curated-package approach inspired by [Voyage Linux](http://svn.
 
 The overlay upper *is* the diff between the running system and the shipped image — useful for diagnostics and drift monitoring.
 
-VM and container storage belongs **off the boot media** (separate disk, NFS, iSCSI, Ceph). `/var/lib/vz` on a USB stick is not a good idea regardless of root-filesystem cleverness.
+VM and container storage belongs **off the boot media** (separate disk, NFS, iSCSI, Ceph). `/var/lib/vz` on a USB stick is not a good idea regardless of root-filesystem setup.
 
 ## Build host requirements
 
 - Debian or Ubuntu on **amd64**. PVE has no aarch64 target, so the build host must be x86_64. macOS aarch64 hosts: use a Lima x86_64 VM (QEMU-emulated, slow) or an amd64 LXC/VM elsewhere.
 - Root (or sudo) access.
-- ~5 GB free disk for the chroot + output image.
+- ~8 GB free disk for the chroot + output image.
 - Build deps: `debootstrap squashfs-tools rsync curl gpg ca-certificates dosfstools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
 - Loop devices and KVM. Inside a Proxmox LXC build host, pass through `/dev/loop[0-N]`, `/dev/loop-control`, `/dev/kvm` plus the relevant cgroup permissions.
 
@@ -130,3 +130,4 @@ The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 ## Acknowledgments
 
 Voyage Linux for the original idea of a tight, read-only Debian on flash media.
+OpenWrt for the actual overlay filesystem logic.
