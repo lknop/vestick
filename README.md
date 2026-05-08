@@ -119,10 +119,11 @@ The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 
 ## Documentation
 
-- [docs/installation.md](docs/installation.md) — flash to USB/SD, optional pre-boot partition grow, first-boot wizards, troubleshooting.
+- [docs/installation.md](docs/installation.md) — flash to USB/SD, optional pre-boot partition grow, first-boot wizard, troubleshooting.
 - [docs/architecture.md](docs/architecture.md) — design decisions: runtime model, overlayroot patch, UEFI boot path, GPT layout, write boundaries.
-- [docs/roadmap.md](docs/roadmap.md) — phase-by-phase status.
 - [docs/build-internals.md](docs/build-internals.md) — package rationale, overlayroot patch details, LXC build-env quirks. Read before touching the chroot, initramfs, loop devices, or `/dev` handling.
+
+Open work is tracked in [Issues](https://github.com/lknop/VEstick/issues).
 
 ## License
 
