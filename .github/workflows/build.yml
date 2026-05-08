@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
             debootstrap squashfs-tools gdisk grub-efi-amd64-bin \
-            dosfstools rsync wget
+            dosfstools f2fs-tools rsync wget
 
       - name: Free disk space
         # PVE build needs ~5 GB scratch (chroot + squashfs + image). Default
