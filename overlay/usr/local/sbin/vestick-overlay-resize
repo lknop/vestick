@@ -1,8 +1,9 @@
 #!/bin/bash
-# First-boot resize of the f2fs overlay partition. Idempotent — growpart
-# returns non-zero when there's nothing to grow, resize.f2fs on an
-# already-full FS is a no-op. Marker file in the overlay itself prevents
-# rerunning unnecessarily.
+# First-boot resize of the f2fs overlay partition. Idempotent and skipped
+# entirely when the partition already reaches the disk end — that lets
+# operators pre-grow the partition (growpart on the flasher, before boot)
+# and avoid this service triggering a partition-table reread on a USB-SATA
+# bridge with buggy UAS, which would cascade into a long boot stall.
 
 set -euo pipefail
 
@@ -22,6 +23,17 @@ parent_disk=$(lsblk -nro PKNAME "$dev" | head -1)
 part_num=$(echo "$dev" | grep -oE '[0-9]+$')
 
 if [[ -n "$parent_disk" && -n "$part_num" ]]; then
+    disk_sectors=$(blockdev --getsz "/dev/$parent_disk" 2>/dev/null || echo 0)
+    part_end=$(sgdisk -i "$part_num" "/dev/$parent_disk" 2>/dev/null \
+                | awk '/Last sector/ {print $3}')
+    # Allow ~100 sectors slack for the GPT secondary header at the end.
+    if [[ -n "$part_end" && $disk_sectors -gt 0 \
+          && $((disk_sectors - part_end)) -lt 200 ]]; then
+        echo "vestick-overlay-resize: partition already at disk end, skipping grow"
+        touch "$MARKER"
+        exit 0
+    fi
+
     # If image was dd'd to a larger device, the GPT secondary header is
     # still at the old end-of-disk; sgdisk -e moves it before growpart.
     sgdisk -e "/dev/$parent_disk" >/dev/null 2>&1 || true

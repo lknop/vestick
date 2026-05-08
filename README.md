@@ -1,24 +1,24 @@
 # VEstick
 
-Minimal Debian Trixie image with a read-only base filesystem, designed as a Proxmox VE appliance for USB stick or SD card.
+Minimal Debian Trixie + Proxmox VE image for USB stick or SD card. Read-only base, persistent overlay, tmpfs for chatty paths.
 
 ## What this is
 
-A small, opinionated build pipeline that produces a Debian 13 (Trixie) image with:
+A build pipeline that produces a Debian 13 (Trixie) image with:
 
-- **Read-only squashfs base + persistent f2fs overlay** — the read-only base layer is never modified at runtime; all writes (config edits, `apt install`, package state) land in a flash-friendly f2fs upper layer that captures exactly the diff from the shipped image.
-- **Tmpfs for chatty paths** — logs, caches, perf graphs, and similar regenerable state route to RAM so flash takes only the writes that actually need to persist.
-- **Curated minimal package set** — `debootstrap --variant=minbase` plus a hand-picked list, installed with `--no-install-recommends`. No `man-db`, no `cron`, no `os-prober`, no `popularity-contest`.
-- **Proxmox VE on top** — fetched from the Proxmox `pve-no-subscription` apt repository at build time. No Proxmox packages are checked into this repo; the build pulls them and bakes them into the image.
-- **Remote logging by default** — `journald` runs with `Storage=volatile`; logs leave the box via a build-time-selectable shipper (rsyslog forwarding, `systemd-journal-upload`, or Fluent Bit).
+- **Squashfs base + f2fs overlay** — base is never modified at runtime; writes (config edits, `apt install`, package state) land in the f2fs upper layer, which is exactly the diff from the shipped image.
+- **Tmpfs for chatty paths** — logs, caches, perf graphs, and similar regenerable state in RAM.
+- **Minimal package set** — `debootstrap --variant=minbase` + a hand-picked list, `--no-install-recommends`. No `man-db`, `cron`, `os-prober`, `popularity-contest`.
+- **Proxmox VE on top** — fetched from the `pve-no-subscription` repo at build time. 
+- **Remote logging by default** — `journald Storage=volatile`, off-box via a build-time-selectable shipper (rsyslog, `systemd-journal-upload`, or Fluent Bit).
 
 ## What this is not
 
-VEstick is an **independent project**. It is not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH.
+VEstick is an **independent project**, not affiliated with, endorsed by, or sponsored by Proxmox Server Solutions GmbH. "Proxmox" and the Proxmox logo are trademarks of Proxmox Server Solutions GmbH.
 
-This repository contains build scripts and configuration only — no Proxmox packages are checked into git. Built image artifacts (the `.img` files produced by `build.sh` or downloaded from a Release) do contain Proxmox packages, fetched from the Proxmox apt repository during the build.
+This repository contains build scripts and configuration only.
 
-The read-only-root + curated-package approach is inspired by [Voyage Linux](http://svn.voyage.hk/repos/voyage/trunk/) (long-defunct). No Voyage code is used.
+Read-only-root debian + curated-package approach inspired by [Voyage Linux](http://linux.voyage.hk/) (long-defunct). No voyage code was used. The actual implementation modeled after openwrt (squashfs root + f2fs overlay).
 
 ## Architecture at a glance
 
@@ -28,26 +28,26 @@ The read-only-root + curated-package approach is inspired by [Voyage Linux](http
 | Persistent | f2fs (overlay upper) | any operator edit, `apt install`, `/etc/network/`, SSH host keys, `/var/lib/pve-cluster/` |
 | Volatile | tmpfs | `/var/log`, `/var/cache`, `/var/tmp`, `/tmp`, `/var/lib/rrdcached`, `/var/lib/systemd`, `/var/lib/{vz,pve-manager,postfix}` |
 
-The overlay upper is *exactly* the diff between the running system and the shipped image — useful for diagnostics and for monitoring drift.
+The overlay upper *is* the diff between the running system and the shipped image — useful for diagnostics and drift monitoring.
 
-VM and container storage should live **off the boot media** (separate disk, NFS, iSCSI, Ceph) — `/var/lib/vz` on a USB stick is not a good idea regardless of how clever the root filesystem is.
+VM and container storage belongs **off the boot media** (separate disk, NFS, iSCSI, Ceph). `/var/lib/vz` on a USB stick is not a good idea regardless of root-filesystem setup.
 
 ## Build host requirements
 
-- Debian or Ubuntu on **amd64**. Proxmox VE has no aarch64 build target, so the build host (or a VM/LXC on it) must be x86_64. macOS aarch64 hosts can use a Lima x86_64 VM (slow, QEMU-emulated) or an amd64 LXC/VM elsewhere.
+- Debian or Ubuntu on **amd64**. PVE has no aarch64 target, so the build host must be x86_64. macOS aarch64 hosts: use a Lima x86_64 VM (QEMU-emulated, slow) or an amd64 LXC/VM elsewhere.
 - Root (or sudo) access.
-- ~5 GB free disk for the build chroot and output image.
-- Packages on the build host: `debootstrap squashfs-tools rsync curl gpg ca-certificates dosfstools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
-- **Loop devices and KVM** must be available. Inside a Proxmox LXC build host, this means passing through `/dev/loop[0-N]`, `/dev/loop-control`, `/dev/kvm` and the relevant cgroup permissions. See `lxc.cgroup2.devices.allow` / `lxc.mount.entry` examples in the project notes.
+- ~8 GB free disk for the chroot + output image.
+- Build deps: `debootstrap squashfs-tools rsync wget gpg ca-certificates dosfstools f2fs-tools qemu-utils gdisk grub-pc-bin grub-efi-amd64-bin ovmf`.
+- Loop devices and KVM. Inside a Proxmox LXC build host, pass through `/dev/loop[0-N]`, `/dev/loop-control`, `/dev/kvm` plus the relevant cgroup permissions.
 
 ## Quickstart
 
 ```sh
-sudo INCLUDE_PROXMOX=0 ./build.sh    # Debian-only, boots cleanly today
-./test-vm.sh                         # Boots the disk image in QEMU under UEFI
+sudo INCLUDE_PROXMOX=0 ./build.sh    # Debian-only build
+./test-vm.sh                         # UEFI boot in QEMU
 ```
 
-`./test-vm.sh` defaults to `MODE=image` (full UEFI boot of `out/vestick.img`). `MODE=direct` skips GRUB and uses QEMU's `-kernel` / `-initrd` against `out/rootfs.squashfs` for faster iteration.
+`test-vm.sh` defaults to `MODE=image` (UEFI boot of `out/vestick.img`). `MODE=direct` boots `out/rootfs.squashfs` via QEMU's `-kernel`/`-initrd` for faster iteration.
 
 Environment variables:
 
@@ -63,9 +63,9 @@ Environment variables:
 
 ## Prebuilt images
 
-Every push to `main` and every PR triggers `.github/workflows/build.yml`, which builds both the Debian-only and the `INCLUDE_PROXMOX=1` variants on a fresh `ubuntu-24.04` runner and uploads the resulting `vestick-debian.img` and `vestick-pve.img` (plus matching `.sha256` files) as workflow artifacts (14-day retention).
+Every push to `main` and every PR runs `.github/workflows/build.yml`, building both flavors on a clean `ubuntu-24.04` runner. `vestick-debian.img` and `vestick-pve.img` (plus `.sha256`) ship as workflow artifacts (14-day retention).
 
-Pushing a tag (`v*`) additionally creates a GitHub Release with both images attached, no per-file size limit aside from GitHub's 2 GB cap. Useful for `dd`-to-USB without setting up a build host:
+Pushing a `v*` tag also attaches both images to a GitHub Release. Useful for `dd`-to-USB without a build host:
 
 ```sh
 gh release download vX.Y.Z --pattern 'vestick-pve.img*'
@@ -75,15 +75,15 @@ sudo dd if=vestick-pve.img of=/dev/sdX bs=4M status=progress conv=fsync
 
 ## Logging shipper choice
 
-`journald` is set to RAM-only (`Storage=volatile`) so the boot media takes no log writes. One of three shippers carries logs off the box:
+`journald` is RAM-only (`Storage=volatile`); a shipper carries logs off-box.
 
-| Shipper | Speaks | Best fit |
+| Shipper | Protocol | Best fit |
 |---|---|---|
-| `rsyslog` (default) | syslog UDP/TCP/TLS, RELP | ESXi migrants, Graylog, Splunk syslog input, anything legacy |
-| `systemd-journal-upload` | journal-export over HTTPS to `systemd-journal-remote` | Green-field setups with a journal-remote receiver |
-| `fluent-bit` | journald → syslog/Loki/Elasticsearch/etc. | Modern observability stacks |
+| `rsyslog` (default) | syslog UDP/TCP/TLS, RELP | Graylog, Splunk syslog input, anything legacy |
+| `systemd-journal-upload` | journal-export over HTTPS | Setups with a `systemd-journal-remote` receiver |
+| `fluent-bit` | journald → syslog/Loki/Elasticsearch/… | Modern observability stacks |
 
-`systemd-journal-upload` is **not** interoperable with Graylog/Splunk/rsyslog — its receiver must be `systemd-journal-remote`. Pick `rsyslog` if you have any other syslog endpoint.
+`systemd-journal-upload` only talks to `systemd-journal-remote`. Pick `rsyslog` for anything else.
 
 ## Layout
 
@@ -119,9 +119,10 @@ The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — settled design decisions (RO model, overlayroot patch rationale, UEFI boot path, GPT layout, write boundaries).
-- [docs/roadmap.md](docs/roadmap.md) — phase-by-phase plan with current status. Read this if you want to know what's done and what's next.
-- [docs/build-internals.md](docs/build-internals.md) — non-obvious gotchas with reasons (required package rationale, the overlayroot patch, LXC build env quirks). Read this before changing anything that touches the chroot, the initramfs, loop devices, or `/dev` handling.
+- [docs/installation.md](docs/installation.md) — flash to USB/SD, optional pre-boot partition grow, first-boot wizards, troubleshooting.
+- [docs/architecture.md](docs/architecture.md) — design decisions: runtime model, overlayroot patch, UEFI boot path, GPT layout, write boundaries.
+- [docs/roadmap.md](docs/roadmap.md) — phase-by-phase status.
+- [docs/build-internals.md](docs/build-internals.md) — package rationale, overlayroot patch details, LXC build-env quirks. Read before touching the chroot, initramfs, loop devices, or `/dev` handling.
 
 ## License
 
@@ -130,3 +131,4 @@ The `vestick.img` produced by `build.sh` is GPT-partitioned for UEFI:
 ## Acknowledgments
 
 Voyage Linux for the original idea of a tight, read-only Debian on flash media.
+OpenWrt for the actual overlay filesystem logic.

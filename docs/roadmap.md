@@ -41,7 +41,7 @@ The f2fs partition created in Phase 3 is wired as the overlayfs upper layer (via
 
 1. `configure_apt`: Proxmox apt repo (`download.proxmox.com/debian/pve trixie pve-no-subscription`) and the GPG signing key. Repo URL and key are fetched at build time, not checked into git.
 2. `install_packages`: `proxmox.list` adds `proxmox-ve`, `proxmox-default-kernel` (replaces `linux-image-amd64`), `lvm2`, `thin-provisioning-tools`, `open-iscsi`, `postfix`.
-3. First-boot wizards: `vestick-firstboot` (hostname + root password), `vestick-network-init` (NIC + static IP/CIDR + gateway + DNS, writes `/etc/network/interfaces` and `/etc/hosts` together — same shape as the stock Proxmox installer's network step).
+3. First-boot wizard: `vestick-firstboot` (hostname + root password + NIC + static IP/CIDR + gateway + DNS; writes `/etc/network/interfaces` and `/etc/hosts` together — same shape as the stock Proxmox installer's network step).
 4. SSH host keys: generated on first boot via `ssh.service` ExecStartPre (`ssh-keygen -A`, idempotent); persist on the f2fs overlay.
 5. Verify: boot the image, log in, `pvesh get /version` returns sane data, `https://<ip>:8006` shows the web UI, second boot retains the configured hostname/password/network and unique SSH host keys.
 

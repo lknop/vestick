@@ -213,7 +213,6 @@ prepare_runtime() {
 
     chroot_run systemctl enable \
         vestick-firstboot.service \
-        vestick-network-init.service \
         vestick-overlay-resize.service 2>/dev/null || true
 }
 
@@ -254,7 +253,8 @@ cleanup_chroot() {
     # busts X.509 CN limits and prevents `pvecm updatecerts` from issuing
     # /etc/pve/local/pve-ssl.pem on first boot — pveproxy then can't serve
     # https. vestick-firstboot prompts the operator for the real hostname
-    # and vestick-network-init fills resolv.conf via DHCP/static-IP setup.
+    # and writes /etc/hosts; resolv.conf is filled at runtime by ifupdown
+    # from the static-IP setup.
     echo vestick > "$CHROOT/etc/hostname"
     : > "$CHROOT/etc/resolv.conf"
 
@@ -343,7 +343,7 @@ build_image() {
     local tmp_cfg
     tmp_cfg=$(mktemp)
     cat > "$tmp_cfg" <<EOF
-set timeout=2
+set timeout=3
 set default=0
 
 # grub-mkstandalone bakes this config into a memdisk, so GRUB's root starts
@@ -351,7 +351,19 @@ set default=0
 # /boot/vmlinuz and /boot/initrd.img before loading them.
 search --no-floppy --label EFI --set=root
 
+# Default: quiet boot. quiet + loglevel=3 suppress kernel printk;
+# systemd.show_status=auto makes systemd respect 'quiet' and skip the
+# per-unit status spam to /dev/console — so the first-boot wizards land
+# on a clean screen instead of being interleaved with kernel/init noise.
 menuentry 'VEstick' {
+    linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro quiet loglevel=3 systemd.show_status=auto console=ttyS0 console=tty0 panic=10
+    initrd /boot/initrd.img
+}
+
+# Verbose boot: same config, kernel/systemd output left on. Pick this
+# from the GRUB menu when something goes wrong on first boot and you
+# need to see what the kernel and systemd are doing.
+menuentry 'VEstick (verbose boot)' {
     linux /boot/vmlinuz root=PARTUUID=$rootfs_partuuid rootfstype=squashfs ro console=ttyS0 console=tty0 panic=10
     initrd /boot/initrd.img
 }
